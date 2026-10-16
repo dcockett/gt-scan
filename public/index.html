@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Grey Trunk Scan</title>
+<meta name="description" content="Cockett tool scan — pair the RFID gun as a keyboard, pick a hub, pull the trigger, watch the count.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Scan">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1f232c;
+    --line: #2a2f3a;
+    --text: #f2f4f7;
+    --muted: #9aa3b2;
+    --accent: #f5a524;
+    --accent-ink: #1a1200;
+    --ok: #3ddc84;
+    --warn: #ffb020;
+    --bad: #ff5a5f;
+    --radius: 14px;
+    --gutter: 16px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overscroll-behavior: none; -webkit-user-select: none; user-select: none;
+  }
+  .app { min-height: 100%; display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; padding: 0 var(--gutter) calc(var(--gutter) + var(--safe-b)); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 10px; }
+  header h1 { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 600; }
+  .pill { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .screen { display: none; flex: 1; flex-direction: column; gap: 14px; }
+  .screen.active { display: flex; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  select, input[type=text] {
+    width: 100%; font-size: 18px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 12px; appearance: none; -webkit-appearance: none; outline: none;
+  }
+  select:focus, input[type=text]:focus { border-color: var(--accent); }
+  .field { margin-bottom: 14px; } .field:last-child { margin-bottom: 0; }
+  .btn {
+    width: 100%; border: 0; border-radius: 12px; padding: 18px; font-size: 18px; font-weight: 700; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); letter-spacing: .02em;
+  }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); font-weight: 600; }
+  .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 600; }
+  .row { display: flex; gap: 10px; } .row > * { flex: 1; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .error { color: var(--bad); font-size: 14px; min-height: 1.2em; }
+
+  /* counter */
+  .counter { text-align: center; padding: 22px 16px 18px; }
+  .counter .hub { font-size: 15px; color: var(--muted); margin-bottom: 6px; }
+  .counter .big { font-size: 96px; line-height: 1; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; transition: color .15s; }
+  .counter .big.flash { animation: flash .35s ease-out; }
+  @keyframes flash { 0% { color: var(--accent); transform: scale(1.08); } 100% { color: var(--text); transform: scale(1); } }
+  .counter .of { font-size: 22px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .counter .of b { color: var(--text); font-weight: 700; }
+  .bar { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin: 16px 0 10px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ok); border-radius: 999px; transition: width .2s; }
+  .bar.over i { background: var(--warn); }
+  .bar.done i { background: var(--ok); }
+  .sub { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .over-note { color: var(--warn); font-size: 14px; margin-top: 8px; display: none; }
+  .bar.over ~ .over-note { display: block; }
+
+  /* capture */
+  .arm { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--line); background: var(--panel); }
+  .arm.on { border-color: var(--ok); }
+  .arm .label { flex: 1; font-size: 15px; }
+  .arm .label small { display: block; color: var(--muted); font-size: 12px; }
+  /* the capture box must be focusable and on screen for iOS to deliver keys, but we keep it tiny */
+  #capture { width: 1px; height: 1px; opacity: .01; position: absolute; left: -1px; top: -1px; resize: none; }
+  .manual { display: flex; gap: 8px; }
+  .manual input { flex: 1; font-size: 18px; } .manual button { flex: 0 0 auto; width: auto; padding: 0 18px; }
+  .last { font-size: 13px; color: var(--muted); min-height: 1.2em; font-variant-numeric: tabular-nums; }
+
+  /* verdict */
+  .verdict h2 { margin: 0 0 6px; font-size: 22px; }
+  .verdict .summary { font-size: 17px; line-height: 1.45; }
+  .list { margin: 10px 0 0; padding: 0; list-style: none; font-size: 15px; }
+  .list li { padding: 8px 0; border-top: 1px solid var(--line); }
+  .list li:first-child { border-top: 0; }
+  .tag-bad { color: var(--bad); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 6px 0; }
+  .spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .center { text-align: center; padding: 30px 0; color: var(--muted); }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg: #0f1115; } /* this page is dark on purpose: shop floors, sun, gloves */
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Grey Trunk · Scan</h1>
+    <span class="pill" id="gpsPill"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS off</span></span>
+  </header>
+
+  <!-- SETUP -->
+  <section class="screen active" id="setup">
+    <div class="card">
+      <div class="field">
+        <label for="hub">Hub</label>
+        <select id="hub"><option value="">Loading hubs…</option></select>
+      </div>
+      <div class="field">
+        <label for="who">Who's scanning</label>
+        <select id="who"><option value="">Loading…</option></select>
+      </div>
+      <div class="field">
+        <label for="type">Scan type</label>
+        <select id="type"></select>
+      </div>
+    </div>
+    <button class="btn" id="start" disabled>Start scan</button>
+    <div class="error" id="setupError"></div>
+    <p class="hint">Gun paired as a keyboard? Then just pull the trigger once the count screen is up. Add this page to your home screen for one-tap access.</p>
+  </section>
+
+  <!-- SCAN -->
+  <section class="screen" id="scan">
+    <div class="card counter">
+      <div class="hub" id="scanHub">Quad Con 006</div>
+      <div class="big" id="count">0</div>
+      <div class="of">of <b id="total">143</b> in this hub</div>
+      <div class="bar" id="bar"><i></i></div>
+      <div class="sub"><span id="todayNote"></span><span id="typeNote"></span></div>
+      <div class="over-note">Over the expected count — something's in range that doesn't belong here, or it's reading the next box.</div>
+    </div>
+
+    <div class="arm" id="arm">
+      <span class="dot" id="armDot"></span>
+      <span class="label"><span id="armText">Scanner armed</span><small id="lastRead">Pull the trigger</small></span>
+      <button class="btn ghost" style="width:auto;padding:10px 14px;font-size:14px" id="rearm" type="button">Re-arm</button>
+    </div>
+    <textarea id="capture" inputmode="none" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Scanner input"></textarea>
+
+    <div class="manual">
+      <input type="text" id="manualTag" inputmode="numeric" placeholder="Type a tag # by hand" autocomplete="off">
+      <button class="btn secondary" id="manualAdd" type="button">Add</button>
+    </div>
+
+    <button class="btn" id="complete">Complete scan</button>
+    <div class="row">
+      <button class="btn ghost" id="resetPass" type="button">Clear pass</button>
+      <button class="btn ghost" id="cancelPass" type="button">Cancel</button>
+    </div>
+    <div class="error" id="scanError"></div>
+  </section>
+
+  <!-- SENDING -->
+  <section class="screen" id="sending">
+    <div class="card center"><span class="spinner"></span> Sending to Grey Trunk…</div>
+  </section>
+
+  <!-- VERDICT -->
+  <section class="screen" id="verdict">
+    <div class="card verdict">
+      <h2 id="vTitle">Scan saved</h2>
+      <div class="summary" id="vSummary"></div>
+      <div id="vWrong"></div>
+      <div id="vMissing"></div>
+    </div>
+    <button class="btn" id="again">Scan this hub again</button>
+    <button class="btn secondary" id="newHub">Done — new hub</button>
+  </section>
+</div>
+
+<script>
+(() => {
+  // ---------- EPC helpers (mirror of lib/epc.js) ----------
+  const HEX24 = /[0-9A-F]{24}/g;
+  const hexOnly = (s) => String(s || "").toUpperCase().replace(/[^0-9A-F]/g, "");
+  function extractEpcs(buffer) {
+    const epcs = []; const lines = String(buffer || "").split(/\r?\n/); const last = lines.pop();
+    for (const line of lines) {
+      const h = hexOnly(line); if (!h) continue;
+      if (h.length % 24 === 0) { for (let i = 0; i < h.length; i += 24) epcs.push(h.slice(i, i + 24)); }
+      else { const m = h.match(HEX24); if (m) epcs.push(...m); }
+    }
+    let pending = hexOnly(last);
+    while (pending.length >= 24) { epcs.push(pending.slice(0, 24)); pending = pending.slice(24); }
+    return { epcs, pending };
+  }
+  const epcFromTagId = (t) => { const h = hexOnly(t); return h && h.length <= 24 ? h.padStart(24, "0") : null; };
+  const displayTag = (e) => String(e).replace(/^0+/, "") || "0";
+
+  // ---------- state ----------
+  const $ = (id) => document.getElementById(id);
+  const screens = ["setup", "scan", "sending", "verdict"];
+  const show = (name) => screens.forEach((s) => $(s).classList.toggle("active", s === name));
+  let data = { hubs: [], people: [], types: [] };
+  let pass = null; // { hubId, hubName, expected, scannedToday, personId, personName, type, epcs:[], startedAt }
+  let gps = null;  // { lat, lng, accuracy }
+  let wakeLock = null;
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  // ---------- setup ----------
+  async function loadSetup() {
+    $("setupError").textContent = "";
+    try {
+      const r = await fetch("/api/hubs", { cache: "no-store" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      data = await r.json();
+    } catch (e) {
+      $("setupError").textContent = "Couldn't load hubs: " + e.message + " — pull down to retry.";
+      return;
+    }
+    const hubSel = $("hub"), whoSel = $("who"), typeSel = $("type");
+    hubSel.innerHTML = '<option value="">Pick a hub…</option>' + data.hubs.map((h) =>
+      `<option value="${h.id}">${esc(h.name)}${h.nickname ? " · " + esc(h.nickname) : ""} — ${h.expected} tools</option>`).join("");
+    whoSel.innerHTML = '<option value="">Pick your name…</option>' + data.people.map((p) =>
+      `<option value="${p.id}">${esc(p.name)}${p.active ? "" : " (inactive)"}</option>`).join("");
+    typeSel.innerHTML = data.types.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    whoSel.value = store.get("who", "") || "";
+    typeSel.value = store.get("type", "Full Hub Audit") || "Full Hub Audit";
+    hubSel.value = store.get("hub", "") || "";
+    validateSetup();
+  }
+  function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function validateSetup() { $("start").disabled = !($("hub").value && $("who").value); }
+  ["hub", "who", "type"].forEach((id) => $(id).addEventListener("change", validateSetup));
+
+  $("start").addEventListener("click", () => {
+    const hub = data.hubs.find((h) => h.id === $("hub").value);
+    const who = data.people.find((p) => p.id === $("who").value);
+    if (!hub || !who) return;
+    store.set("hub", hub.id); store.set("who", who.id); store.set("type", $("type").value);
+    pass = { hubId: hub.id, hubName: hub.name + (hub.nickname ? " · " + hub.nickname : ""), expected: hub.expected,
+             scannedToday: hub.scannedToday, personId: who.id, personName: who.name, type: $("type").value,
+             epcs: [], startedAt: new Date().toISOString() };
+    savePass(); startGps(); keepAwake(); renderScan(); show("scan"); arm();
+  });
+
+  // ---------- scan ----------
+  const set = () => new Set(pass.epcs);
+  function renderScan(flash) {
+    const n = pass.epcs.length, total = pass.expected || 0;
+    $("scanHub").textContent = pass.hubName;
+    const big = $("count"); big.textContent = n;
+    if (flash) { big.classList.remove("flash"); void big.offsetWidth; big.classList.add("flash"); }
+    $("total").textContent = total;
+    const bar = $("bar"); const pct = total ? Math.min(100, (n / total) * 100) : 0;
+    bar.querySelector("i").style.width = pct + "%";
+    bar.classList.toggle("over", total > 0 && n > total);
+    bar.classList.toggle("done", total > 0 && n === total);
+    $("todayNote").textContent = pass.scannedToday ? `${pass.scannedToday} already scanned today` : "";
+    $("typeNote").textContent = pass.type;
+    $("complete").disabled = n === 0;
+  }
+  function addEpcs(list, source) {
+    const s = set(); let added = 0, lastTag = null;
+    for (const e of list) { if (!s.has(e)) { s.add(e); pass.epcs.push(e); added++; lastTag = e; } else lastTag = lastTag || e; }
+    if (lastTag) $("lastRead").textContent = (added ? "Read " : "Already had ") + displayTag(lastTag) + (source === "manual" ? " (typed)" : "");
+    if (added) { savePass(); renderScan(true); }
+    return added;
+  }
+  function savePass() { if (pass) store.set("pass", pass); }
+
+  // keyboard-wedge capture
+  const cap = $("capture");
+  let pendingBuf = "";
+  cap.addEventListener("input", () => {
+    const { epcs, pending } = extractEpcs(cap.value);
+    if (epcs.length) addEpcs(epcs, "gun");
+    pendingBuf = pending;
+    cap.value = pending; // keep only the partial tail
+  });
+  cap.addEventListener("keydown", (e) => { if (e.key === "Enter") { /* newline is our delimiter; let it through */ } });
+  function arm() {
+    cap.focus({ preventScroll: true });
+    const on = document.activeElement === cap;
+    $("arm").classList.toggle("on", on); $("armDot").className = "dot " + (on ? "ok" : "warn");
+    $("armText").textContent = on ? "Scanner armed" : "Tap Re-arm, then pull the trigger";
+  }
+  $("rearm").addEventListener("click", arm);
+  cap.addEventListener("blur", () => setTimeout(() => { if ($("scan").classList.contains("active") && document.activeElement !== $("manualTag")) arm(); }, 150));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && $("scan").classList.contains("active")) { arm(); keepAwake(); } });
+  // tap anywhere that's not a control → re-arm
+  $("scan").addEventListener("click", (e) => { if (!e.target.closest("button, input, select, a, textarea")) arm(); });
+
+  // manual entry
+  function manualAdd() {
+    const e = epcFromTagId($("manualTag").value);
+    if (!e) { $("scanError").textContent = "That doesn't look like a tag number."; return; }
+    $("scanError").textContent = ""; addEpcs([e], "manual"); $("manualTag").value = ""; arm();
+  }
+  $("manualAdd").addEventListener("click", manualAdd);
+  $("manualTag").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); manualAdd(); } });
+
+  $("resetPass").addEventListener("click", () => { if (!pass.epcs.length || confirm("Clear everything read in this pass?")) { pass.epcs = []; savePass(); renderScan(); $("lastRead").textContent = "Pull the trigger"; arm(); } });
+  $("cancelPass").addEventListener("click", () => { if (!pass.epcs.length || confirm("Throw away this pass?")) { pass = null; store.del("pass"); releaseWake(); show("setup"); } });
+
+  // ---------- complete ----------
+  $("complete").addEventListener("click", async () => {
+    if (!pass || !pass.epcs.length) return;
+    $("scanError").textContent = ""; show("sending");
+    const body = { hubId: pass.hubId, personId: pass.personId, type: pass.type, tags: pass.epcs, startedAt: pass.startedAt,
+                   lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy };
+    try {
+      const r = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.error || r.statusText);
+      renderVerdict(out); store.del("pass"); releaseWake(); show("verdict");
+    } catch (e) {
+      show("scan"); arm();
+      $("scanError").textContent = "Didn't send: " + e.message + ". Your reads are still here — try Complete again.";
+    }
+  });
+
+  function renderVerdict(v) {
+    const ok = v.status === "Done";
+    $("vTitle").textContent = ok ? "Scan saved" : (v.status === "Error" ? "Saved, but Airtable hit an error" : "Saved — still processing");
+    $("vSummary").textContent = v.summary || `${v.submitted} tag${v.submitted === 1 ? "" : "s"} sent.`;
+    const w = $("vWrong"); w.innerHTML = "";
+    if (v.wrongBox && v.wrongBox.length && !/nothing out of place/i.test(v.wrongBox[0])) {
+      const items = v.wrongBox.slice(1).length ? v.wrongBox.slice(1) : v.wrongBox;
+      w.innerHTML = `<ul class="list">${items.map((l) => `<li class="tag-bad">${esc(l)}</li>`).join("")}</ul>`;
+    }
+    const m = $("vMissing"); m.innerHTML = "";
+    if (v.missing && v.missing.length) {
+      m.innerHTML = `<details><summary>${esc(v.missingHeader || (v.missing.length + " not scanned"))} — show</summary><ul class="list">${v.missing.slice(0, 200).map((l) => `<li>${esc(l)}</li>`).join("")}</ul></details>`;
+    } else if (v.missingHeader) {
+      m.innerHTML = `<p class="hint">${esc(v.missingHeader)}</p>`;
+    }
+  }
+  $("again").addEventListener("click", async () => {
+    // refresh totals (Scanned Today moves after a pass), keep hub/person/type
+    const keep = { hubId: pass.hubId, personId: pass.personId, type: pass.type };
+    await loadSetup();
+    const hub = data.hubs.find((h) => h.id === keep.hubId) || {};
+    pass = { ...pass, epcs: [], startedAt: new Date().toISOString(), expected: hub.expected ?? pass.expected, scannedToday: hub.scannedToday ?? pass.scannedToday };
+    savePass(); keepAwake(); renderScan(); $("lastRead").textContent = "Pull the trigger"; show("scan"); arm();
+  });
+  $("newHub").addEventListener("click", async () => { pass = null; store.del("pass"); await loadSetup(); show("setup"); });
+
+  // ---------- gps ----------
+  function startGps() {
+    if (!navigator.geolocation) { setGps("bad", "no GPS"); return; }
+    setGps("warn", "GPS…");
+    navigator.geolocation.getCurrentPosition(
+      (p) => { gps = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }; setGps("ok", `GPS ±${Math.round(p.coords.accuracy)} m`); },
+      () => setGps("bad", "no GPS"),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
+  }
+  function setGps(cls, text) { $("gpsDot").className = "dot " + cls; $("gpsText").textContent = text; }
+
+  // ---------- wake lock ----------
+  async function keepAwake() { try { if ("wakeLock" in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); } } catch {} }
+  function releaseWake() { try { wakeLock?.release(); } catch {} wakeLock = null; }
+
+  // ---------- boot ----------
+  loadSetup().then(() => {
+    const saved = store.get("pass", null);
+    if (saved && saved.epcs && saved.epcs.length) {
+      pass = saved; renderScan(); show("scan"); keepAwake(); startGps();
+      $("lastRead").textContent = `Resumed — ${pass.epcs.length} read so far`;
+    }
+  });
+})();
+</script>
+</body>
+</html>
