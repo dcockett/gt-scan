@@ -146,7 +146,7 @@
 
     <div class="arm" id="arm">
       <span class="dot" id="armDot"></span>
-      <span class="label"><span id="armText">Scanner armed</span><small id="lastRead">Pull the trigger</small></span>
+      <span class="label"><span id="armText">Listening for the gun</span><small id="lastRead">Pull the trigger — the page can't see whether the gun is connected</small></span>
       <button class="btn ghost" style="width:auto;padding:10px 14px;font-size:14px" id="rearm" type="button">Re-arm</button>
     </div>
     <textarea id="capture" inputmode="none" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Scanner input"></textarea>
@@ -272,7 +272,7 @@
   function addEpcs(list, source) {
     const s = set(); let added = 0, lastTag = null;
     for (const e of list) { if (!s.has(e)) { s.add(e); pass.epcs.push(e); added++; lastTag = e; } else lastTag = lastTag || e; }
-    if (lastTag) $("lastRead").textContent = (added ? "Read " : "Already had ") + displayTag(lastTag) + (source === "manual" ? " (typed)" : "");
+    if (lastTag) { lastReadAt = Date.now(); $("lastRead").textContent = (added ? "Read " : "Already had ") + displayTag(lastTag) + (source === "manual" ? " (typed)" : ""); }
     if (added) { savePass(); renderScan(true); }
     return added;
   }
@@ -292,8 +292,15 @@
     cap.focus({ preventScroll: true });
     const on = document.activeElement === cap;
     $("arm").classList.toggle("on", on); $("armDot").className = "dot " + (on ? "ok" : "warn");
-    $("armText").textContent = on ? "Scanner armed" : "Tap Re-arm, then pull the trigger";
+    $("armText").textContent = on ? "Listening for the gun" : "Tap Re-arm, then pull the trigger";
   }
+  // "last read N s ago" ticker so a dead/asleep gun is obvious
+  let lastReadAt = 0;
+  setInterval(() => {
+    if (!lastReadAt || !$("scan").classList.contains("active")) return;
+    const s = Math.round((Date.now() - lastReadAt) / 1000);
+    if (s >= 10) $("lastRead").textContent = `No reads for ${s} s — is the gun awake and paired?`;
+  }, 1000);
   $("rearm").addEventListener("click", arm);
   cap.addEventListener("blur", () => setTimeout(() => { if ($("scan").classList.contains("active") && document.activeElement !== $("manualTag")) arm(); }, 150));
   document.addEventListener("visibilitychange", () => { if (!document.hidden && $("scan").classList.contains("active")) { arm(); keepAwake(); } });
