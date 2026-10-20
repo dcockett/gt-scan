@@ -11,17 +11,31 @@
 //
 // If TAGMATIKS_KEY is set on the server, the URL must carry ?k=<that key>.
 
-import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, getRecord, listAll, selectName } from "../lib/airtable.js";
+import { createHash } from "node:crypto";
+import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, listAll } from "../lib/airtable.js";
 import { parseTagList } from "../lib/epc.js";
 import { assignHub } from "../lib/assign.js";
 
-const WAIT_MS = 20 * 1000;
+// TagMatiks re-sends an upload if the response is slow, so: answer at once, and treat the same tag set from the
+// same sled inside this window as one upload. Checked in memory (warm instance) and in Airtable (cold start).
+const DEDUPE_MS = 3 * 60 * 1000;
+const recent = new Map(); // uploadKey → { at, sessionId }
+function uploadKey(sled, epcs) { return createHash("sha1").update(sled + "|" + [...epcs].sort().join(",")).digest("hex").slice(0, 10); }
+async function alreadyLanded(key) {
+  const mem = recent.get(key);
+  if (mem && Date.now() - mem.at < DEDUPE_MS) return mem.sessionId;
+  try {
+    const recs = await listAll(T.sessions, { fields: [F.sessions.notes], filterByFormula: `AND(FIND('upload ${key}', {Notes}), IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -${DEDUPE_MS / 60000}, 'minutes')))` });
+    const hit = recs.find((r) => String(r.fields?.[F.sessions.notes] || "").includes(`upload ${key}`));
+    if (hit) return hit.id;
+  } catch (e) { console.warn("[tagmatiks] dedupe lookup failed", e.message); }
+  return null;
+}
 
 function num(v) {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? "").trim());
   return Number.isFinite(n) ? n : null;
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Find the array of reads in whatever shape the body arrived. */
 export function extractReads(body) {
@@ -90,9 +104,14 @@ export default async function handler(req, res) {
   if (!d.epcs.length) { res.status(400).json({ error: "No tags found in the upload", reads: d.reads }); return; }
 
   try {
+    const key = uploadKey(sled, d.epcs);
+    const dup = await alreadyLanded(key);
+    if (dup) { console.log("[tagmatiks] duplicate upload ignored", { key, sessionId: dup }); res.status(200).json({ ok: true, duplicate: true, sessionId: dup, tags: d.epcs.length }); return; }
+    recent.set(key, { at: Date.now(), sessionId: "pending" });
+
     const assigned = await assignHub({ urlHub: q.get("hub"), inventoryName: d.inventory, epcs: d.epcs });
     const person = await findPerson(q.get("by"));
-    const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
+    const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", `upload ${key}`, d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
       assigned ? `hub auto: ${assigned.how}` : "hub unknown — waiting for the page", assigned?.warning ? `⚠️ ${assigned.warning}` : ""].filter(Boolean).join(" · ");
 
     const fields = {
@@ -111,22 +130,15 @@ export default async function handler(req, res) {
     }
 
     const rec = await createRecord(T.sessions, fields);
+    recent.set(key, { at: Date.now(), sessionId: rec.id });
     if (!assigned) {
+      console.log("[tagmatiks] parked", { sessionId: rec.id, tags: d.epcs.length, sled });
       res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, status: AWAITING_HUB, next: "Open the scan page, tap the waiting scan, pick the hub, Complete." });
       return;
     }
-    // give the automation a moment so the response (and Vercel logs) carry the verdict
-    const deadline = Date.now() + WAIT_MS;
-    let status = "", summary = "";
-    while (Date.now() < deadline) {
-      await sleep(1000);
-      const r = await getRecord(T.sessions, rec.id);
-      status = selectName(r.fields?.[F.sessions.ingestStatus]);
-      summary = r.fields?.[F.sessions.summary] || "";
-      if (status) break;
-    }
-    console.log("[tagmatiks] result", { sessionId: rec.id, hub: assigned.hub.name, how: assigned.how, status: status || "Pending", summary });
-    res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, hub: assigned.hub.name, how: assigned.how, by: person?.name || null, status: status || "Pending", summary });
+    // answer right away — the Scan Ingest automation runs on its own; a slow answer makes TagMatiks re-send
+    console.log("[tagmatiks] assigned", { sessionId: rec.id, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name, tags: d.epcs.length });
+    res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name || null, status: "Processing" });
   } catch (e) {
     console.error("[tagmatiks] error", e.message);
     res.status(502).json({ error: e.message || String(e) });

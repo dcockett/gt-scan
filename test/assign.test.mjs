@@ -26,6 +26,10 @@ test("voteHub: clear majority wins, retail tags ignored", () => {
   const v = voteHub([P("258227"), P("89616"), P("89599"), P("89708"), "30283312D82900D61E7101F7"], homes);
   assert.deepEqual(v, { hubId: "rec00600000000006", votes: 3, known: 4, total: 5 });
 });
+test("voteHub: 2 of 3 is too thin unless all agree", () => {
+  assert.equal(voteHub([P("258227"), P("89616"), P("89708")], homes), null);               // 2–1 → park
+  assert.deepEqual(voteHub([P("258227"), P("89616")], homes), { hubId: "rec00600000000006", votes: 2, known: 2, total: 2 }); // all agree
+});
 test("voteHub: tie or thin evidence → null", () => {
   assert.equal(voteHub([P("258227"), P("89708")], homes), null);           // 1–1
   assert.equal(voteHub([P("258227")], homes), null);                        // only one known tag
