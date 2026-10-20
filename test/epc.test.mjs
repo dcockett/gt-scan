@@ -49,3 +49,25 @@ test("displayTag strips zeros", () => {
   assert.equal(displayTag(A), "258227");
   assert.equal(displayTag(GS1), GS1);
 });
+
+import { readFileSync } from "node:fs";
+import { parseTagList } from "../lib/epc.js";
+
+test("parseTagList: real 123RFID Mobile Share File CSV (10/19)", () => {
+  const csv = readFileSync(new URL("./fixtures/123rfid-taglist.csv", import.meta.url), "utf8");
+  assert.deepEqual(parseTagList(csv), [
+    "30283312D82900D61E7101F7",
+    "000000000000000000258227",
+    "000000000000000000251038",
+  ]);
+});
+
+test("parseTagList: plain list, mixed separators, dupes, junk", () => {
+  const t = parseTagList("000000000000000000089599,000000000000000000089599\n303404721813519B0224B7E7; 12345 ,\"000000000000000000089708\"");
+  assert.deepEqual(t, ["000000000000000000089599", "303404721813519B0224B7E7", "000000000000000000089708"]);
+});
+
+test("parseTagList: empty / nonsense → []", () => {
+  assert.deepEqual(parseTagList(""), []);
+  assert.deepEqual(parseTagList("INVENTORY SUMMARY\nUNIQUE COUNT:,3\n\"READ TIME:\",\"00:12\""), []);
+});

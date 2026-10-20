@@ -78,6 +78,13 @@
   .over-note { color: var(--warn); font-size: 14px; margin-top: 8px; display: none; }
   .bar.over ~ .over-note { display: block; }
 
+  /* imported-from-123RFID banner on the setup screen */
+  .import { text-align: center; padding: 18px 16px 16px; border: 1px solid var(--accent); }
+  .import .big { font-size: 56px; line-height: 1; font-weight: 800; letter-spacing: -.03em; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .import .of { font-size: 18px; color: var(--muted); margin-top: 2px; }
+  .import .sub { display: block; text-align: center; margin-top: 10px; font-size: 14px; line-height: 1.4; }
+  .import .sub b { color: var(--text); }
+
   /* capture */
   .arm { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--line); background: var(--panel); }
   .arm.on { border-color: var(--ok); }
@@ -114,6 +121,11 @@
 
   <!-- SETUP -->
   <section class="screen active" id="setup">
+    <div class="card import" id="importCard" hidden>
+      <div class="big" id="importCount">0</div>
+      <div class="of">tags brought in from 123RFID</div>
+      <div class="sub">Pick the hub and who scanned, then <b>Start</b> — the count carries over. You can still add reads with the gun or by hand before you Complete.</div>
+    </div>
     <div class="card">
       <div class="field">
         <label for="hub">Hub</label>
@@ -130,7 +142,7 @@
     </div>
     <button class="btn" id="start" disabled>Start scan</button>
     <div class="error" id="setupError"></div>
-    <p class="hint">Gun paired as a keyboard? Then just pull the trigger once the count screen is up. Add this page to your home screen for one-tap access.</p>
+    <p class="hint">Scanned in 123RFID? Use Share File → <b>Send to Grey Trunk</b> and the tags land here. Gun paired as a keyboard? Pull the trigger once the count screen is up.</p>
   </section>
 
   <!-- SCAN -->
@@ -200,6 +212,24 @@
   }
   const epcFromTagId = (t) => { const h = hexOnly(t); return h && h.length <= 24 ? h.padStart(24, "0") : null; };
   const displayTag = (e) => String(e).replace(/^0+/, "") || "0";
+  // Tag list from an exported file (123RFID Mobile "Share File" CSV, or a plain comma/newline list).
+  // Each 24-hex token on its own counts; header lines, counts and RSSI never form a 24-hex token.
+  function parseTagList(text) {
+    const out = []; const seen = new Set();
+    for (const tok of String(text || "").split(/[\s,;"']+/)) {
+      const h = hexOnly(tok);
+      if (h.length === 24 && !seen.has(h)) { seen.add(h); out.push(h); }
+    }
+    return out;
+  }
+  // #csv=<url-encoded file text> or #tags=a,b,c — set by the "Send to Grey Trunk" iOS Shortcut
+  function takeImportFromUrl() {
+    const m = /^#(?:csv|tags)=(.*)$/s.exec(location.hash || "");
+    if (!m) return [];
+    let text = m[1]; try { text = decodeURIComponent(text); } catch {}
+    try { history.replaceState(null, "", location.pathname + location.search); } catch {}
+    return parseTagList(text);
+  }
 
   // ---------- state ----------
   const $ = (id) => document.getElementById(id);
@@ -209,6 +239,14 @@
   let pass = null; // { hubId, hubName, expected, scannedToday, personId, personName, type, epcs:[], startedAt }
   let gps = null;  // { lat, lng, accuracy }
   let wakeLock = null;
+  let imported = []; // tags handed over by the Shortcut, waiting for a hub/person on the setup screen
+
+  function showImportCard() {
+    const card = $("importCard");
+    card.hidden = !imported.length;
+    $("importCount").textContent = imported.length;
+    $("start").textContent = imported.length ? `Start with ${imported.length} tag${imported.length === 1 ? "" : "s"}` : "Start scan";
+  }
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -251,6 +289,8 @@
              scannedToday: hub.scannedToday, personId: who.id, personName: who.name, type: $("type").value,
              epcs: [], startedAt: new Date().toISOString() };
     savePass(); startGps(); keepAwake(); renderScan(); show("scan"); arm();
+    if (imported.length) { const n = imported.length; addEpcs(imported, "import"); imported = []; showImportCard();
+      $("lastRead").textContent = `${n} tag${n === 1 ? "" : "s"} brought in from 123RFID — Complete when ready, or keep scanning`; }
   });
 
   // ---------- scan ----------
@@ -272,7 +312,9 @@
   function addEpcs(list, source) {
     const s = set(); let added = 0, lastTag = null;
     for (const e of list) { if (!s.has(e)) { s.add(e); pass.epcs.push(e); added++; lastTag = e; } else lastTag = lastTag || e; }
-    if (lastTag) { lastReadAt = Date.now(); $("lastRead").textContent = (added ? "Read " : "Already had ") + displayTag(lastTag) + (source === "manual" ? " (typed)" : ""); }
+    if (lastTag) { lastReadAt = Date.now(); $("lastRead").textContent = source === "import"
+      ? `${added} brought in from 123RFID${list.length - added ? ` (${list.length - added} already had)` : ""}`
+      : (added ? "Read " : "Already had ") + displayTag(lastTag) + (source === "manual" ? " (typed)" : ""); }
     if (added) { savePass(); renderScan(true); }
     return added;
   }
@@ -379,12 +421,21 @@
   function releaseWake() { try { wakeLock?.release(); } catch {} wakeLock = null; }
 
   // ---------- boot ----------
+  imported = takeImportFromUrl();
+  showImportCard();
   loadSetup().then(() => {
     const saved = store.get("pass", null);
     if (saved && saved.epcs && saved.epcs.length) {
       pass = saved; renderScan(); show("scan"); keepAwake(); startGps();
       $("lastRead").textContent = `Resumed — ${pass.epcs.length} read so far`;
+      // a Shortcut hand-off while a pass is open just adds to it
+      if (imported.length) { addEpcs(imported, "import"); imported = []; showImportCard(); }
     }
+  });
+  // hand-off can also arrive while the page is already open (Shortcut re-opens the same tab)
+  window.addEventListener("hashchange", () => {
+    const more = takeImportFromUrl(); if (!more.length) return;
+    if (pass) { addEpcs(more, "import"); } else { imported = [...new Set([...imported, ...more])]; showImportCard(); }
   });
 })();
 </script>
