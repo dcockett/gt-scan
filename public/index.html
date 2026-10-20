@@ -133,8 +133,10 @@
       <div class="sub">Pick the hub and who scanned, then <b>Start</b> — the count carries over. You can still add reads with the gun or by hand before you Complete.</div>
     </div>
     <div class="card paste" id="pasteCard">
-      <div class="sub" id="pasteHint">Scanned in 123RFID? Share File → <b>Send To Grey Trunk</b>, then tap below.</div>
-      <button class="btn secondary" id="pasteBtn" type="button">Paste tags from 123RFID</button>
+      <div class="sub" id="pasteHint">Scanned in 123RFID? When the share sheet pops up, tap <b>Save to Files</b>, then open that file here.</div>
+      <button class="btn secondary" id="fileBtn" type="button">Open the 123RFID file</button>
+      <input type="file" id="fileInput" accept=".csv,.txt,text/plain,text/csv,text/comma-separated-values" hidden>
+      <button class="btn ghost" id="pasteBtn" type="button" style="margin-top:8px">Paste tags instead</button>
       <textarea id="pasteBox" hidden placeholder="Paste the tag list here"></textarea>
       <div class="error" id="pasteError"></div>
     </div>
@@ -267,16 +269,24 @@
     if (pass) { addEpcs(tags, "import"); show("scan"); arm(); }
     else { imported = [...new Set([...imported, ...tags])]; showImportCard(); }
   }
-  // "Paste tags" — the Shortcut copies the file to the clipboard and opens this page
+  // "Open the 123RFID file" — Share File → Save to Files, then pick it here (iOS copies files, not text, so this is the reliable path)
+  $("fileBtn").addEventListener("click", () => { $("pasteError").textContent = ""; $("fileInput").value = ""; $("fileInput").click(); });
+  $("fileInput").addEventListener("change", async () => {
+    const f = $("fileInput").files && $("fileInput").files[0]; if (!f) return;
+    try { takeImportedText(await f.text(), "file"); }
+    catch (e) { $("pasteError").textContent = "Couldn't read that file: " + e.message; }
+  });
+  // "Paste tags" — works when real text is on the clipboard (e.g. via the Shortcut); falls back to a paste box
   $("pasteBtn").addEventListener("click", async () => {
     if (!$("pasteBox").hidden && $("pasteBox").value.trim()) { takeImportedText($("pasteBox").value, "box"); return; }
-    try {
-      const t = await navigator.clipboard.readText();
-      takeImportedText(t, "clipboard");
-    } catch {
-      $("pasteBox").hidden = false; $("pasteBox").focus();
-      $("pasteError").textContent = "Long-press in the box and tap Paste, then tap the button again.";
+    let t = "";
+    try { t = await navigator.clipboard.readText(); } catch {}
+    if (!t && navigator.clipboard.read) {
+      try { for (const item of await navigator.clipboard.read()) { for (const type of item.types) { if (type.startsWith("text/")) { t = await (await item.getType(type)).text(); if (t) break; } } if (t) break; } } catch {}
     }
+    if (t) { takeImportedText(t, "clipboard"); return; }
+    $("pasteBox").hidden = false; $("pasteBox").focus();
+    $("pasteError").textContent = "Nothing on the clipboard as text — use Open the 123RFID file instead, or long-press in the box and Paste.";
   });
   $("pasteBox").addEventListener("input", () => { if (parseTagList($("pasteBox").value).length) takeImportedText($("pasteBox").value, "box"); });
 
@@ -457,7 +467,7 @@
   showImportCard();
   if (/[?&]from=123rfid/.test(location.search)) {
     $("pasteCard").classList.add("hot");
-    $("pasteHint").innerHTML = "123RFID just copied your scan. <b>Tap below</b> to bring the tags in.";
+    $("pasteHint").innerHTML = "Coming from 123RFID — <b>tap below</b> to bring the tags in.";
     try { history.replaceState(null, "", location.pathname); } catch {}
   }
   loadSetup().then(() => {
