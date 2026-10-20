@@ -5,7 +5,7 @@
 //
 // Body: { hubId, personId, type, tags: [epc...], lat, lng, accuracy, site, notes }
 
-import { T, F, SESSION_TYPES, createRecord, getRecord, selectName } from "../lib/airtable.js";
+import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, getRecord, updateRecord, selectName } from "../lib/airtable.js";
 import { extractEpcs } from "../lib/epc.js";
 
 const POLL_MS = 1000;
@@ -51,7 +51,6 @@ export async function submitScan(body) {
     [F.sessions.hub]: [hubId],
     [F.sessions.by]: [personId],
     [F.sessions.type]: type,
-    [F.sessions.started]: body.startedAt || new Date().toISOString(),
     [F.sessions.rawPayload]: tags.join("\n"),
   };
   if (Number.isFinite(body.lat) && Number.isFinite(body.lng)) {
@@ -60,11 +59,30 @@ export async function submitScan(body) {
     if (Number.isFinite(body.accuracy)) fields[F.sessions.accuracy] = Math.round(body.accuracy);
   }
   if (body.site) fields[F.sessions.site] = String(body.site).slice(0, 200);
-  const notes = [body.notes ? String(body.notes).trim() : "", "via scan page"].filter(Boolean).join(" · ");
-  fields[F.sessions.notes] = notes;
 
-  const created = await createRecord(T.sessions, fields);
-  const sessionId = created.id;
+  // A gun upload (TagMatiks) parked as "Awaiting hub" is claimed in place: same record, hub/person filled,
+  // status cleared so the Scan Ingest automation fires. Anything else creates a fresh session.
+  const claimId = /^rec[A-Za-z0-9]{14}$/.test(String(body.sessionId || "")) ? String(body.sessionId) : null;
+  let created, sessionId;
+  if (claimId) {
+    const parked = await getRecord(T.sessions, claimId);
+    if (selectName(parked.fields?.[F.sessions.ingestStatus]) !== AWAITING_HUB) {
+      throw Object.assign(new Error("That gun upload was already used — pick it again from the list."), { status: 409 });
+    }
+    const merged = cleanTags([...(parked.fields?.[F.sessions.rawPayload] || "").split("\n"), ...tags]);
+    fields[F.sessions.rawPayload] = merged.join("\n");
+    fields[F.sessions.ingestStatus] = null;
+    if (!parked.fields?.[F.sessions.started]) fields[F.sessions.started] = body.startedAt || new Date().toISOString();
+    if (parked.fields?.[F.sessions.lat] != null && !(Number.isFinite(body.lat) && Number.isFinite(body.lng))) { delete fields[F.sessions.lat]; delete fields[F.sessions.lng]; }
+    fields[F.sessions.notes] = [parked.fields?.[F.sessions.notes] || "", body.notes ? String(body.notes).trim() : "", "hub picked on scan page"].filter(Boolean).join(" · ");
+    created = await updateRecord(T.sessions, claimId, fields);
+    sessionId = claimId;
+  } else {
+    fields[F.sessions.started] = body.startedAt || new Date().toISOString();
+    fields[F.sessions.notes] = [body.notes ? String(body.notes).trim() : "", "via scan page"].filter(Boolean).join(" · ");
+    created = await createRecord(T.sessions, fields);
+    sessionId = created.id;
+  }
 
   // Wait for Scan Ingest to stamp Done / Error.
   const deadline = Date.now() + POLL_MAX_MS;

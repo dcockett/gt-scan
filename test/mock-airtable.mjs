@@ -35,11 +35,10 @@ http.createServer((req, res) => {
     if (req.method === "GET" && recId) {
       const r = sessions.get(recId); return r ? json(res, 200, r) : json(res, 404, { error: "nope" });
     }
-    if (req.method === "POST" && table === T.sessions) {
-      const body = JSON.parse(raw); const f = body.records[0].fields;
-      const id = "recMOCK" + String(++n).padStart(10, "0");
-      const rec = { id, fields: { ...f } }; sessions.set(id, rec);
-      // pretend Scan Ingest runs
+    // pretend Scan Ingest: fires when Raw Payload is set and Ingest Status is blank (same as the real automation)
+    const ingest = (rec) => {
+      const f = rec.fields;
+      if (!f.flde0qnfKleKwNcHZ || f.fldDjF1KMVfUkZRjt) return;
       setTimeout(() => {
         const tags = String(f.flde0qnfKleKwNcHZ || "").split("\n").filter(Boolean);
         const hub = hubs.find((h) => h.id === (f.fldfTyKsOAdSHbVnO || [])[0]);
@@ -53,7 +52,21 @@ http.createServer((req, res) => {
         rec.fields.fldO9vDlAzhBwGcPY = wrong.length ? `1 in the wrong box:\n89708 Milwaukee 4-1/2" - 6" Grinder — belongs in Quad Con 004` : "✅ nothing out of place";
         rec.fields.fld0CL36kcxVKUU0U = `${expected - 7 - tags.length} of ${expected} not scanned today (…):\n250959 1/2” impact socket set SAE — miss #1\n89564 1/2” impact small — miss #1`;
       }, 1500);
+    };
+    if (req.method === "POST" && table === T.sessions) {
+      const body = JSON.parse(raw); const f = body.records[0].fields;
+      const id = "recMOCK" + String(++n).padStart(10, "0");
+      const rec = { id, fields: { ...f }, createdTime: new Date().toISOString() }; sessions.set(id, rec);
+      if (typeof rec.fields.fldDjF1KMVfUkZRjt === "string") rec.fields.fldDjF1KMVfUkZRjt = { name: rec.fields.fldDjF1KMVfUkZRjt };
+      ingest(rec);
       return json(res, 200, { records: [rec] });
+    }
+    if (req.method === "PATCH" && table === T.sessions && recId) {
+      const rec = sessions.get(recId); if (!rec) return json(res, 404, { error: "nope" });
+      const f = JSON.parse(raw).fields || {};
+      for (const [k, v] of Object.entries(f)) { if (v === null) delete rec.fields[k]; else rec.fields[k] = (k === "fldDjF1KMVfUkZRjt" && typeof v === "string") ? { name: v } : v; }
+      ingest(rec);
+      return json(res, 200, rec);
     }
     json(res, 405, { error: "unsupported in mock" });
   });

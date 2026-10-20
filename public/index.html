@@ -84,6 +84,12 @@
   .import .of { font-size: 18px; color: var(--muted); margin-top: 2px; }
   .import .sub { display: block; text-align: center; margin-top: 10px; font-size: 14px; line-height: 1.4; }
   .import .sub b { color: var(--text); }
+  .pending { padding: 14px 16px; border: 1px solid var(--ok); }
+  .pending .sub { display: block; margin-bottom: 8px; font-size: 14px; }
+  .pending .sub b { color: var(--text); }
+  .pending button.row-btn { display: flex; justify-content: space-between; align-items: center; width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 8px; font: inherit; font-size: 16px; text-align: left; }
+  .pending button.row-btn b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .pending button.row-btn small { color: var(--muted); display: block; font-size: 13px; }
   .paste { padding: 14px 16px; }
   .paste .sub { display: block; margin-bottom: 10px; font-size: 14px; line-height: 1.4; }
   .paste .sub b { color: var(--text); }
@@ -131,6 +137,10 @@
       <div class="big" id="importCount">0</div>
       <div class="of">tags brought in from 123RFID</div>
       <div class="sub">Pick the hub and who scanned, then <b>Start</b> — the count carries over. You can still add reads with the gun or by hand before you Complete.</div>
+    </div>
+    <div class="card pending" id="pendingCard" hidden>
+      <div class="sub"><b>Waiting from the gun</b> — tap a scan, pick the hub, then Start.</div>
+      <div id="pendingList"></div>
     </div>
     <div class="card paste" id="pasteCard">
       <div class="sub" id="pasteHint">Scanned in 123RFID? When the share sheet pops up, tap <b>Save to Files</b>, then open that file here.</div>
@@ -253,7 +263,9 @@
   let pass = null; // { hubId, hubName, expected, scannedToday, personId, personName, type, epcs:[], startedAt }
   let gps = null;  // { lat, lng, accuracy }
   let wakeLock = null;
-  let imported = []; // tags handed over by the Shortcut, waiting for a hub/person on the setup screen
+  let imported = []; // tags handed over (file, paste, or a gun upload), waiting for a hub/person on the setup screen
+  let claimSessionId = null; // the parked "Awaiting hub" session this pass will claim, if any
+  let pendingList = [];
 
   function showImportCard() {
     const card = $("importCard");
@@ -261,7 +273,33 @@
     $("importCount").textContent = imported.length;
     $("start").textContent = imported.length ? `Start with ${imported.length} tag${imported.length === 1 ? "" : "s"}` : "Start scan";
     $("pasteCard").hidden = imported.length > 0;
+    $("pendingCard").hidden = imported.length > 0 || !pendingList.length;
   }
+
+  // ---------- gun uploads parked in Airtable (TagMatiks → /api/tagmatiks) ----------
+  const fmtWhen = (iso) => { const d = iso ? new Date(iso) : null; if (!d || isNaN(d)) return ""; const mins = Math.round((Date.now() - d) / 60000);
+    return mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + (d.toDateString() === new Date().toDateString() ? "" : " " + d.toLocaleDateString()); };
+  function renderPending() {
+    const box = $("pendingList"); box.innerHTML = "";
+    for (const p of pendingList) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "row-btn";
+      b.innerHTML = `<span>Gun upload <small>${esc(fmtWhen(p.createdAt))}${p.lat != null ? " · GPS" : ""}</small></span><b>${p.count} tag${p.count === 1 ? "" : "s"}</b>`;
+      b.addEventListener("click", () => {
+        imported = [...new Set([...imported, ...p.tags])]; claimSessionId = p.id;
+        if (!gps && p.lat != null && p.lng != null) { gps = { lat: p.lat, lng: p.lng, accuracy: null }; setGps("ok", "GPS from gun"); }
+        $("pasteError").textContent = ""; showImportCard();
+        $("importCard").querySelector(".of").textContent = "tags from the gun upload";
+      });
+      box.appendChild(b);
+    }
+    showImportCard();
+  }
+  async function loadPending() {
+    if (!$("setup").classList.contains("active")) return;
+    try { const r = await fetch("/api/pending", { cache: "no-store" }); if (!r.ok) return; pendingList = (await r.json()).pending || []; renderPending(); } catch {}
+  }
+  setInterval(loadPending, 10000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadPending(); });
   function takeImportedText(text, how) {
     const tags = parseTagList(text);
     if (!tags.length) { $("pasteError").textContent = how === "clipboard" ? "Nothing that looks like a tag list on the clipboard — paste it into the box instead." : "No 24-character tags in that."; $("pasteBox").hidden = false; return; }
@@ -329,10 +367,10 @@
     store.set("hub", hub.id); store.set("who", who.id); store.set("type", $("type").value);
     pass = { hubId: hub.id, hubName: hub.name + (hub.nickname ? " · " + hub.nickname : ""), expected: hub.expected,
              scannedToday: hub.scannedToday, personId: who.id, personName: who.name, type: $("type").value,
-             epcs: [], startedAt: new Date().toISOString() };
-    savePass(); startGps(); keepAwake(); renderScan(); show("scan"); arm();
-    if (imported.length) { const n = imported.length; addEpcs(imported, "import"); imported = []; showImportCard();
-      $("lastRead").textContent = `${n} tag${n === 1 ? "" : "s"} brought in from 123RFID — Complete when ready, or keep scanning`; }
+             epcs: [], startedAt: new Date().toISOString(), claimSessionId: claimSessionId || null };
+    savePass(); if (!gps) startGps(); keepAwake(); renderScan(); show("scan"); arm();
+    if (imported.length) { const n = imported.length; const fromGun = !!claimSessionId; addEpcs(imported, "import"); imported = []; claimSessionId = null; showImportCard();
+      $("lastRead").textContent = `${n} tag${n === 1 ? "" : "s"} from the ${fromGun ? "gun upload" : "123RFID file"} — Complete when ready, or keep scanning`; }
   });
 
   // ---------- scan ----------
@@ -401,14 +439,14 @@
   $("manualTag").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); manualAdd(); } });
 
   $("resetPass").addEventListener("click", () => { if (!pass.epcs.length || confirm("Clear everything read in this pass?")) { pass.epcs = []; savePass(); renderScan(); $("lastRead").textContent = "Pull the trigger"; arm(); } });
-  $("cancelPass").addEventListener("click", () => { if (!pass.epcs.length || confirm("Throw away this pass?")) { pass = null; store.del("pass"); releaseWake(); show("setup"); } });
+  $("cancelPass").addEventListener("click", () => { if (!pass.epcs.length || confirm("Throw away this pass?")) { pass = null; store.del("pass"); releaseWake(); show("setup"); loadPending(); } });
 
   // ---------- complete ----------
   $("complete").addEventListener("click", async () => {
     if (!pass || !pass.epcs.length) return;
     $("scanError").textContent = ""; show("sending");
     const body = { hubId: pass.hubId, personId: pass.personId, type: pass.type, tags: pass.epcs, startedAt: pass.startedAt,
-                   lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy };
+                   lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy ?? undefined, sessionId: pass.claimSessionId || undefined };
     try {
       const r = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const out = await r.json().catch(() => ({}));
@@ -444,7 +482,7 @@
     pass = { ...pass, epcs: [], startedAt: new Date().toISOString(), expected: hub.expected ?? pass.expected, scannedToday: hub.scannedToday ?? pass.scannedToday };
     savePass(); keepAwake(); renderScan(); $("lastRead").textContent = "Pull the trigger"; show("scan"); arm();
   });
-  $("newHub").addEventListener("click", async () => { pass = null; store.del("pass"); await loadSetup(); show("setup"); });
+  $("newHub").addEventListener("click", async () => { pass = null; store.del("pass"); await loadSetup(); show("setup"); loadPending(); });
 
   // ---------- gps ----------
   function startGps() {
@@ -477,6 +515,8 @@
       $("lastRead").textContent = `Resumed — ${pass.epcs.length} read so far`;
       // a Shortcut hand-off while a pass is open just adds to it
       if (imported.length) { addEpcs(imported, "import"); imported = []; showImportCard(); }
+    } else {
+      loadPending();
     }
   });
   // hand-off can also arrive while the page is already open (Shortcut re-opens the same tab)
