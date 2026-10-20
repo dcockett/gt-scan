@@ -5,7 +5,13 @@ import http from "node:http";
 
 const PORT = Number(process.env.MOCK_PORT || 3999);
 const BASE = "app2Hy10fWVqEs4T0";
-const T = { hubs: "tblJivoY2jZI9b3at", employees: "tbldQrEVxFYdVrBi5", sessions: "tbl1gDnpnNoa36d38" };
+const T = { hubs: "tblJivoY2jZI9b3at", employees: "tbldQrEVxFYdVrBi5", sessions: "tbl1gDnpnNoa36d38", tools: "tblt1mNexHRkG0aSq", equipment: "tblIzmuWnWGcnimVz" };
+// tag → home hub, for the "tags vote" hub assignment
+const tools = [
+  ["258227", "recwk9GhI5A8WUXcC"], ["89616", "recwk9GhI5A8WUXcC"], ["89599", "recwk9GhI5A8WUXcC"], ["89581", "recwk9GhI5A8WUXcC"],
+  ["89708", "recQC004xxxxxxxxx"], ["251003", "recQC004xxxxxxxxx"], ["251038", "recQC004xxxxxxxxx"],
+].map(([t, h], i) => ({ id: "recTOOL" + String(i).padStart(10, "0"), fields: { fldzrUK25BcmobI7p: "tool " + t, fldlIt2543zw00wwN: t, fld8zHzmbea5o44AF: [h] } }));
+const equipment = [];
 
 const hubs = [
   { id: "recwk9GhI5A8WUXcC", fields: { fldOwxEqbJFOKbiM4: "Quad Con 006", fldKrXCyYdHpPYazv: "QC 006", fldKy8gIBtEZjfSec: { name: "Quad Con" }, fldVSwin0zwU46vsH: { name: "At Yard / Shop" }, fld3IDMLUHwIVIvHP: "Cockett Yard - Lewiston UT", fldYGE9qP0e6rv7KV: 143, fldma8X4hhexTc8bC: 7 } },
@@ -29,7 +35,7 @@ http.createServer((req, res) => {
     if (parts[1] !== BASE) return json(res, 404, { error: "no such base" });
     const table = parts[2], recId = parts[3];
     if (req.method === "GET" && !recId) {
-      const rows = table === T.hubs ? hubs : table === T.employees ? people : [...sessions.values()];
+      const rows = table === T.hubs ? hubs : table === T.employees ? people : table === T.tools ? tools : table === T.equipment ? equipment : [...sessions.values()];
       return json(res, 200, { records: rows });
     }
     if (req.method === "GET" && recId) {

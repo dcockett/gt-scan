@@ -1,9 +1,24 @@
 {
   "functions": {
-    "api/scan.js": { "maxDuration": 30 },
-    "api/hubs.js": { "maxDuration": 15 }
+    "api/scan.js": {
+      "maxDuration": 30
+    },
+    "api/hubs.js": {
+      "maxDuration": 15
+    },
+    "api/tagmatiks.js": {
+      "maxDuration": 30
+    }
   },
   "headers": [
-    { "source": "/(.*)", "headers": [ { "key": "X-Robots-Tag", "value": "noindex" } ] }
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex"
+        }
+      ]
+    }
   ]
 }
