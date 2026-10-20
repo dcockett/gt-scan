@@ -84,6 +84,12 @@
   .import .of { font-size: 18px; color: var(--muted); margin-top: 2px; }
   .import .sub { display: block; text-align: center; margin-top: 10px; font-size: 14px; line-height: 1.4; }
   .import .sub b { color: var(--text); }
+  .paste { padding: 14px 16px; }
+  .paste .sub { display: block; margin-bottom: 10px; font-size: 14px; line-height: 1.4; }
+  .paste .sub b { color: var(--text); }
+  .paste.hot { border: 1px solid var(--accent); }
+  .paste.hot .btn { background: var(--accent); color: #111; }
+  .paste textarea { width: 100%; min-height: 90px; margin-top: 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: inherit; }
 
   /* capture */
   .arm { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--line); background: var(--panel); }
@@ -125,6 +131,12 @@
       <div class="big" id="importCount">0</div>
       <div class="of">tags brought in from 123RFID</div>
       <div class="sub">Pick the hub and who scanned, then <b>Start</b> — the count carries over. You can still add reads with the gun or by hand before you Complete.</div>
+    </div>
+    <div class="card paste" id="pasteCard">
+      <div class="sub" id="pasteHint">Scanned in 123RFID? Share File → <b>Send To Grey Trunk</b>, then tap below.</div>
+      <button class="btn secondary" id="pasteBtn" type="button">Paste tags from 123RFID</button>
+      <textarea id="pasteBox" hidden placeholder="Paste the tag list here"></textarea>
+      <div class="error" id="pasteError"></div>
     </div>
     <div class="card">
       <div class="field">
@@ -246,7 +258,27 @@
     card.hidden = !imported.length;
     $("importCount").textContent = imported.length;
     $("start").textContent = imported.length ? `Start with ${imported.length} tag${imported.length === 1 ? "" : "s"}` : "Start scan";
+    $("pasteCard").hidden = imported.length > 0;
   }
+  function takeImportedText(text, how) {
+    const tags = parseTagList(text);
+    if (!tags.length) { $("pasteError").textContent = how === "clipboard" ? "Nothing that looks like a tag list on the clipboard — paste it into the box instead." : "No 24-character tags in that."; $("pasteBox").hidden = false; return; }
+    $("pasteError").textContent = ""; $("pasteBox").hidden = true; $("pasteBox").value = "";
+    if (pass) { addEpcs(tags, "import"); show("scan"); arm(); }
+    else { imported = [...new Set([...imported, ...tags])]; showImportCard(); }
+  }
+  // "Paste tags" — the Shortcut copies the file to the clipboard and opens this page
+  $("pasteBtn").addEventListener("click", async () => {
+    if (!$("pasteBox").hidden && $("pasteBox").value.trim()) { takeImportedText($("pasteBox").value, "box"); return; }
+    try {
+      const t = await navigator.clipboard.readText();
+      takeImportedText(t, "clipboard");
+    } catch {
+      $("pasteBox").hidden = false; $("pasteBox").focus();
+      $("pasteError").textContent = "Long-press in the box and tap Paste, then tap the button again.";
+    }
+  });
+  $("pasteBox").addEventListener("input", () => { if (parseTagList($("pasteBox").value).length) takeImportedText($("pasteBox").value, "box"); });
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -423,6 +455,11 @@
   // ---------- boot ----------
   imported = takeImportFromUrl();
   showImportCard();
+  if (/[?&]from=123rfid/.test(location.search)) {
+    $("pasteCard").classList.add("hot");
+    $("pasteHint").innerHTML = "123RFID just copied your scan. <b>Tap below</b> to bring the tags in.";
+    try { history.replaceState(null, "", location.pathname); } catch {}
+  }
   loadSetup().then(() => {
     const saved = store.get("pass", null);
     if (saved && saved.epcs && saved.epcs.length) {
