@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
-<title>Grey Trunk Scan</title>
+<title>Cockett Tools Scan</title>
 <meta name="description" content="Cockett tool scan — pair the RFID gun as a keyboard, pick a hub, pull the trigger, watch the count.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -127,7 +127,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Grey Trunk · Scan</h1>
+    <h1>Cockett Tools · Scan</h1>
     <span class="pill" id="gpsPill"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS off</span></span>
   </header>
 
@@ -166,7 +166,7 @@
     </div>
     <button class="btn" id="start" disabled>Start scan</button>
     <div class="error" id="setupError"></div>
-    <p class="hint">Scanned in 123RFID? Use Share File → <b>Send to Grey Trunk</b> and the tags land here. Gun paired as a keyboard? Pull the trigger once the count screen is up.</p>
+    <p class="hint">Scanning with TagMatiks? Just scan and stop — it files itself. This page is for picking the hub on a scan that couldn't tell, or scanning by hand.</p>
   </section>
 
   <!-- SCAN -->
@@ -202,7 +202,7 @@
 
   <!-- SENDING -->
   <section class="screen" id="sending">
-    <div class="card center"><span class="spinner"></span> Sending to Grey Trunk…</div>
+    <div class="card center"><span class="spinner"></span> Sending to Cockett Tools & Hubs…</div>
   </section>
 
   <!-- VERDICT -->
@@ -357,16 +357,18 @@
     validateSetup();
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-  function validateSetup() { $("start").disabled = !($("hub").value && $("who").value); }
+  const sweepPicked = () => $("type").value === "Sweep";
+  function validateSetup() { $("start").disabled = !($("who").value && ($("hub").value || sweepPicked())); $("hub").closest(".field").querySelector("label").textContent = sweepPicked() ? "Hub (optional for a sweep)" : "Hub"; }
   ["hub", "who", "type"].forEach((id) => $(id).addEventListener("change", validateSetup));
 
   $("start").addEventListener("click", () => {
     const hub = data.hubs.find((h) => h.id === $("hub").value);
     const who = data.people.find((p) => p.id === $("who").value);
-    if (!hub || !who) return;
-    store.set("hub", hub.id); store.set("who", who.id); store.set("type", $("type").value);
-    pass = { hubId: hub.id, hubName: hub.name + (hub.nickname ? " · " + hub.nickname : ""), expected: hub.expected,
-             scannedToday: hub.scannedToday, personId: who.id, personName: who.name, type: $("type").value,
+    if (!who || (!hub && !sweepPicked())) return;
+    if (hub) store.set("hub", hub.id);
+    store.set("who", who.id); store.set("type", $("type").value);
+    pass = { hubId: hub ? hub.id : null, hubName: hub ? hub.name + (hub.nickname ? " · " + hub.nickname : "") : "Sweep — no hub", expected: hub ? hub.expected : 0,
+             scannedToday: hub ? hub.scannedToday : 0, personId: who.id, personName: who.name, type: $("type").value,
              epcs: [], startedAt: new Date().toISOString(), claimSessionId: claimSessionId || null };
     savePass(); if (!gps) startGps(); keepAwake(); renderScan(); show("scan"); arm();
     if (imported.length) { const n = imported.length; const fromGun = !!claimSessionId; addEpcs(imported, "import"); imported = []; claimSessionId = null; showImportCard();
@@ -381,6 +383,7 @@
     const big = $("count"); big.textContent = n;
     if (flash) { big.classList.remove("flash"); void big.offsetWidth; big.classList.add("flash"); }
     $("total").textContent = total;
+    $("total").parentElement.innerHTML = pass.type === "Sweep" && !pass.hubId ? 'tags seen — <b id="total">sweep</b>, nothing judged' : `of <b id="total">${total}</b> in this hub`;
     const bar = $("bar"); const pct = total ? Math.min(100, (n / total) * 100) : 0;
     bar.querySelector("i").style.width = pct + "%";
     bar.classList.toggle("over", total > 0 && n > total);

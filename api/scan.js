@@ -7,6 +7,7 @@
 
 import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, getRecord, updateRecord, selectName } from "../lib/airtable.js";
 import { extractEpcs } from "../lib/epc.js";
+import { snapSite } from "../lib/site.js";
 
 const POLL_MS = 1000;
 const POLL_MAX_MS = 25 * 1000; // Vercel hobby functions get 10s by default; vercel.json raises it
@@ -43,12 +44,12 @@ export async function submitScan(body) {
   const type = SESSION_TYPES.includes(body.type) ? body.type : "Full Hub Audit";
   const tags = cleanTags(body.tags);
 
-  if (!/^rec[A-Za-z0-9]{14}$/.test(hubId)) throw Object.assign(new Error("Pick a hub first."), { status: 400 });
+  const isSweep = type === "Sweep";
+  if (!isSweep && !/^rec[A-Za-z0-9]{14}$/.test(hubId)) throw Object.assign(new Error("Pick a hub first (or choose Sweep)."), { status: 400 });
   if (!/^rec[A-Za-z0-9]{14}$/.test(personId)) throw Object.assign(new Error("Pick who is scanning."), { status: 400 });
   if (!tags.length) throw Object.assign(new Error("No tags read yet — nothing to submit."), { status: 400 });
 
   const fields = {
-    [F.sessions.hub]: [hubId],
     [F.sessions.by]: [personId],
     [F.sessions.type]: type,
     [F.sessions.rawPayload]: tags.join("\n"),
@@ -58,14 +59,26 @@ export async function submitScan(body) {
     fields[F.sessions.lng] = body.lng;
     if (Number.isFinite(body.accuracy)) fields[F.sessions.accuracy] = Math.round(body.accuracy);
   }
-  if (body.site) fields[F.sessions.site] = String(body.site).slice(0, 200);
+  if (/^rec[A-Za-z0-9]{14}$/.test(hubId)) fields[F.sessions.hub] = [hubId];
 
   // A gun upload (TagMatiks) parked as "Awaiting hub" is claimed in place: same record, hub/person filled,
   // status cleared so the Scan Ingest automation fires. Anything else creates a fresh session.
   const claimId = /^rec[A-Za-z0-9]{14}$/.test(String(body.sessionId || "")) ? String(body.sessionId) : null;
+  const parked = claimId ? await getRecord(T.sessions, claimId) : null;
+
+  // Site: what the page sent, else snapped from GPS (the phone's, or the gun's on a parked upload), else the gun's place.
+  const pageGps = Number.isFinite(body.lat) && Number.isFinite(body.lng);
+  const gpsLat = pageGps ? body.lat : Number(parked?.fields?.[F.sessions.lat]);
+  const gpsLng = pageGps ? body.lng : Number(parked?.fields?.[F.sessions.lng]);
+  let site = body.site ? String(body.site).trim() : "";
+  if (!site) {
+    try { site = (await snapSite({ lat: gpsLat, lng: gpsLng, hubId: fields[F.sessions.hub]?.[0] || null, gunPlace: parked?.fields?.[F.sessions.site] || "" })).site; }
+    catch (e) { console.warn("[scan] site snap failed", e.message); }
+  }
+  if (site) fields[F.sessions.site] = site.slice(0, 200);
+
   let created, sessionId;
   if (claimId) {
-    const parked = await getRecord(T.sessions, claimId);
     if (selectName(parked.fields?.[F.sessions.ingestStatus]) !== AWAITING_HUB) {
       throw Object.assign(new Error("That gun upload was already used — pick it again from the list."), { status: 409 });
     }

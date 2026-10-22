@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Grey Trunk Scan — phone page for Cockett's RFID hub scans (RFD40 in HID mode) with a live counter, relayed into the Grey Trunk Replacement 2.0 Airtable base.",
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test test/*.test.mjs && node test/ingest-harness.mjs",
     "dev": "node dev.mjs"
   },
   "engines": { "node": ">=20" }

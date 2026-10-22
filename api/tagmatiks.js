@@ -5,9 +5,12 @@
 //   [{ "EPC": "0000…258227", "RSSI": "-54", "ReadCount": "2", "Latitude": "41.9", "Longitude": "-111.8",
 //      "ReadTime": "10/20/2026 01:46 AM", "EPCBank": "", "LocationDetail": "…", "Quantity": "1" }, …]
 //
-// The hub is worked out here (lib/assign.js: URL → inventory name → the tags vote). When it is known, the
-// Scan Session is created complete, the Scan Ingest automation runs, and the result is waited for briefly.
+// The hub is worked out here (lib/assign.js: the tags vote, then inventory name / ?hub= as tie-breakers). When it is
+// known, the Scan Session is created complete and the Scan Ingest automation runs on its own (we answer at once).
 // When it isn't, the session is parked as Ingest Status = "Awaiting hub" for the scan page to claim.
+// A Sweep (?type=Sweep on the sled URL, or "sweep" in the TagMatiks inventory name) needs no hub and never parks.
+// Site (snapped) comes from lib/site.js: the hub's job/site when the GPS is there, else a nearby hub's, else the
+// place TagMatiks reports (LocationDetail).
 //
 // If TAGMATIKS_KEY is set on the server, the URL must carry ?k=<that key>.
 
@@ -15,6 +18,7 @@ import { createHash } from "node:crypto";
 import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, listAll } from "../lib/airtable.js";
 import { parseTagList } from "../lib/epc.js";
 import { assignHub } from "../lib/assign.js";
+import { snapSite } from "../lib/site.js";
 
 // TagMatiks re-sends an upload if the response is slow, so: answer at once, and treat the same tag set from the
 // same sled inside this window as one upload. Checked in memory (warm instance) and in Airtable (cold start).
@@ -49,21 +53,22 @@ export function extractReads(body) {
   return [];
 }
 
-/** Turn a TagMatiks payload into { epcs, lat, lng, inventory, reads } */
+/** Turn a TagMatiks payload into { epcs, lat, lng, inventory, place, reads } */
 export function digest(body) {
   const reads = extractReads(body);
   const epcs = [];
   const seen = new Set();
-  let lat = null, lng = null, inventory = "";
+  let lat = null, lng = null, inventory = "", place = "";
   for (const r of reads) {
     const raw = r?.EPC ?? r?.epc ?? r?.Epc ?? r?.TagID ?? r?.tagId ?? r?.tag ?? "";
     for (const e of parseTagList(String(raw))) if (!seen.has(e)) { seen.add(e); epcs.push(e); }
     if (lat == null) { const la = num(r?.Latitude ?? r?.latitude), lo = num(r?.Longitude ?? r?.longitude); if (la != null && lo != null && (la !== 0 || lo !== 0)) { lat = la; lng = lo; } }
     if (!inventory) inventory = String(r?.InventoryName ?? r?.inventoryName ?? r?.Inventory ?? r?.inventory ?? "").trim();
+    if (!place) place = String(r?.LocationDetail ?? r?.locationDetail ?? r?.Location ?? "").replace(/\s*,\s*/g, ", ").trim();
   }
   if (!inventory && body && typeof body === "object" && !Array.isArray(body)) inventory = String(body.InventoryName ?? body.inventoryName ?? body.name ?? "").trim();
   if (!epcs.length && typeof body === "string") for (const e of parseTagList(body)) if (!seen.has(e)) { seen.add(e); epcs.push(e); }
-  return { epcs, lat, lng, inventory, reads: reads.length };
+  return { epcs, lat, lng, inventory, place, reads: reads.length };
 }
 
 let peopleCache = { at: 0, list: [] };
@@ -83,7 +88,7 @@ export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method === "GET") {
     res.status(200).json({ ok: true, service: "gt-scan tagmatiks receiver", expects: "POST JSON array of {EPC,…}", keyRequired: !!process.env.TAGMATIKS_KEY,
-      options: "?hub=QC006 (which box this sled rides in) ?by=Name (who scans with it) ?type=Full Hub Audit ?sled=1" });
+      options: "?hub=QC006 (tie-breaker: the box this sled usually rides in) ?by=Name (who scans with it) ?type=Full Hub Audit | Sweep ?sled=1" });
     return;
   }
   if (req.method !== "POST") { res.status(405).json({ error: "POST only" }); return; }
@@ -93,7 +98,8 @@ export default async function handler(req, res) {
   const need = process.env.TAGMATIKS_KEY;
   if (need && q.get("k") !== need) { res.status(401).json({ error: "bad key" }); return; }
   const sled = (q.get("sled") || q.get("device") || "").slice(0, 40);
-  const type = SESSION_TYPES.includes(q.get("type") || "") ? q.get("type") : "Full Hub Audit";
+  const qType = String(q.get("type") || "").trim();
+  const urlType = SESSION_TYPES.find((t) => t.toLowerCase() === qType.toLowerCase()) || "";
 
   let body = req.body;
   if (typeof body === "string") { try { body = JSON.parse(body); } catch { /* digest() will scan the text for tags */ } }
@@ -109,10 +115,16 @@ export default async function handler(req, res) {
     if (dup) { console.log("[tagmatiks] duplicate upload ignored", { key, sessionId: dup }); res.status(200).json({ ok: true, duplicate: true, sessionId: dup, tags: d.epcs.length }); return; }
     recent.set(key, { at: Date.now(), sessionId: "pending" });
 
-    const assigned = await assignHub({ urlHub: q.get("hub"), inventoryName: d.inventory, epcs: d.epcs });
+    const isSweep = urlType === "Sweep" || /\bsweep\b/i.test(d.inventory);
+    const type = isSweep ? "Sweep" : (urlType || "Full Hub Audit");
+    const assigned = isSweep ? null : await assignHub({ urlHub: q.get("hub"), inventoryName: d.inventory, epcs: d.epcs });
     const person = await findPerson(q.get("by"));
+    let snapped = { site: d.place, how: "gun's reported place" };
+    try { snapped = await snapSite({ lat: d.lat, lng: d.lng, hubId: assigned?.hub.id || null, gunPlace: d.place }); }
+    catch (e) { console.warn("[tagmatiks] site snap failed", e.message); }
     const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", `upload ${key}`, d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
-      assigned ? `hub auto: ${assigned.how}` : "hub unknown — waiting for the page", assigned?.warning ? `⚠️ ${assigned.warning}` : ""].filter(Boolean).join(" · ");
+      isSweep ? "sweep — no hub" : assigned ? `hub auto: ${assigned.how}` : "hub unknown — waiting for the page", assigned?.warning ? `⚠️ ${assigned.warning}` : "",
+      snapped.site ? `site: ${snapped.how}` : ""].filter(Boolean).join(" · ");
 
     const fields = {
       [F.sessions.rawPayload]: d.epcs.join("\n"),
@@ -120,7 +132,12 @@ export default async function handler(req, res) {
       [F.sessions.notes]: notes,
     };
     if (d.lat != null && d.lng != null) { fields[F.sessions.lat] = d.lat; fields[F.sessions.lng] = d.lng; }
-    if (assigned) {
+    if (snapped.site) fields[F.sessions.site] = snapped.site.slice(0, 200);
+    if (isSweep) {
+      fields[F.sessions.type] = "Sweep";
+      if (person) fields[F.sessions.by] = [person.id];
+      // no hub, Ingest Status blank → the automation runs it as a sweep
+    } else if (assigned) {
       fields[F.sessions.hub] = [assigned.hub.id];
       fields[F.sessions.type] = type;
       if (person) fields[F.sessions.by] = [person.id];
@@ -131,6 +148,11 @@ export default async function handler(req, res) {
 
     const rec = await createRecord(T.sessions, fields);
     recent.set(key, { at: Date.now(), sessionId: rec.id });
+    if (isSweep) {
+      console.log("[tagmatiks] sweep", { sessionId: rec.id, tags: d.epcs.length, site: snapped.site, sled });
+      res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, type: "Sweep", site: snapped.site || null, status: "Processing" });
+      return;
+    }
     if (!assigned) {
       console.log("[tagmatiks] parked", { sessionId: rec.id, tags: d.epcs.length, sled });
       res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, status: AWAITING_HUB, next: "Open the scan page, tap the waiting scan, pick the hub, Complete." });
@@ -138,7 +160,7 @@ export default async function handler(req, res) {
     }
     // answer right away — the Scan Ingest automation runs on its own; a slow answer makes TagMatiks re-send
     console.log("[tagmatiks] assigned", { sessionId: rec.id, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name, tags: d.epcs.length });
-    res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name || null, status: "Processing" });
+    res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name || null, site: snapped.site || null, status: "Processing" });
   } catch (e) {
     console.error("[tagmatiks] error", e.message);
     res.status(502).json({ error: e.message || String(e) });

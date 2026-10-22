@@ -14,8 +14,8 @@ const tools = [
 const equipment = [];
 
 const hubs = [
-  { id: "recwk9GhI5A8WUXcC", fields: { fldOwxEqbJFOKbiM4: "Quad Con 006", fldKrXCyYdHpPYazv: "QC 006", fldKy8gIBtEZjfSec: { name: "Quad Con" }, fldVSwin0zwU46vsH: { name: "At Yard / Shop" }, fld3IDMLUHwIVIvHP: "Cockett Yard - Lewiston UT", fldYGE9qP0e6rv7KV: 143, fldma8X4hhexTc8bC: 7 } },
-  { id: "recQC004xxxxxxxxx", fields: { fldOwxEqbJFOKbiM4: "Quad Con 004", fldKy8gIBtEZjfSec: { name: "Quad Con" }, fldYGE9qP0e6rv7KV: 98, fldma8X4hhexTc8bC: 0 } },
+  { id: "recwk9GhI5A8WUXcC", fields: { fldOwxEqbJFOKbiM4: "Quad Con 006", fldKrXCyYdHpPYazv: "QC 006", fldKy8gIBtEZjfSec: { name: "Quad Con" }, fldVSwin0zwU46vsH: { name: "At Yard / Shop" }, fld3IDMLUHwIVIvHP: "Cockett Yard - Lewiston UT", fld78dUMGnzN9AspA: "Cockett Yard - Lewiston UT", fldJtTQekDjZ7NhEL: 41.955, fldY4n4VexRFZ0zR6: -111.856, fldYGE9qP0e6rv7KV: 143, fldma8X4hhexTc8bC: 7 } },
+  { id: "recQC004xxxxxxxxx", fields: { fldOwxEqbJFOKbiM4: "Quad Con 004", fld78dUMGnzN9AspA: "1100 Navy Dr, Stockton CA", fldZkQ7LUuRCH1uUc: "Niagara Stockton", fldJtTQekDjZ7NhEL: 37.95, fldY4n4VexRFZ0zR6: -121.29, fldKy8gIBtEZjfSec: { name: "Quad Con" }, fldYGE9qP0e6rv7KV: 98, fldma8X4hhexTc8bC: 0 } },
   { id: "recFatMikexxxxxxx", fields: { fldOwxEqbJFOKbiM4: "Fat Mike", fldKy8gIBtEZjfSec: { name: "Van Trailer" }, fldYGE9qP0e6rv7KV: 0, fldma8X4hhexTc8bC: 0 } },
 ];
 const people = [
