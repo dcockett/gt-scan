@@ -111,7 +111,16 @@ export default async function handler(req, res) {
   // TagMatiks "Test Sample Data" sends made-up tags (ASCII "Monitor", "CPU"…) with made-up GPS in India.
   // Keep it as a test upload, but never let its GPS move a hub, label a site, or stamp a tool's last-seen.
   const isSample = d.epcs.length > 0 && d.epcs.every((e) => /4D6F6E69746F72|4350550A/i.test(e) || /^0*(4D6F6E69746F72|4350550A)$/i.test(e)) || (d.lat != null && Math.abs(d.lat - 11.102256) < 1e-4 && Math.abs(d.lng - 76.987613) < 1e-4);
-  if (isSample) { d.lat = null; d.lng = null; d.place = ""; }
+  if (isSample) {
+    // "Test Sample Data" proves the address + key work (a bad key already got 401 above) — answer OK, file nothing.
+    d.lat = null; d.lng = null; d.place = "";
+    let who = null;
+    try { who = (await findPerson(q.get("by")))?.name || null; } catch { /* name is a nicety */ }
+    recordUpload({ source: "TagMatiks test sample", sled, person: who, epcs: d.epcs, raw: body });
+    console.log("[tagmatiks] test sample ok", { by: who, sled });
+    res.status(200).json({ ok: true, sample: true, by: who, message: `Test received${who ? ` from ${who}` : ""} — address and key are good. Nothing was filed.` });
+    return;
+  }
   if (!d.epcs.length) { res.status(400).json({ error: "No tags found in the upload", reads: d.reads }); return; }
 
   try {
@@ -133,7 +142,7 @@ export default async function handler(req, res) {
     catch (e) { console.warn("[tagmatiks] site snap failed", e.message); }
     const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", `upload ${key}`, d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
       isSweep ? "sweep — no hub" : assigned ? `hub auto: ${assigned.how}` : `UNCONFIRMED box — tags didn't agree${leader ? `; ${leader}` : ""} · processed as a sweep (no missing / wrong-box)`, assigned?.warning ? `⚠️ ${assigned.warning}` : "",
-      snapped.site ? `site: ${snapped.how}` : "", isSample ? "TagMatiks test sample (GPS ignored)" : ""].filter(Boolean).join(" · ");
+      snapped.site ? `site: ${snapped.how}` : ""].filter(Boolean).join(" · ");
 
     const fields = {
       [F.sessions.rawPayload]: d.epcs.join("\n"),
