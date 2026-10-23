@@ -17,8 +17,8 @@
 import { createHash } from "node:crypto";
 import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, listAll } from "../lib/airtable.js";
 import { parseTagList } from "../lib/epc.js";
-import { assignHub, describeLeader } from "../lib/assign.js";
-import { snapSite } from "../lib/site.js";
+import { receiveChunk, finalizeAfterQuiet, finalizeStale } from "../lib/collect.js";
+import { waitUntil } from "@vercel/functions";
 import { recordUpload } from "../lib/history.js";
 
 // TagMatiks re-sends an upload if the response is slow, so: answer at once, and treat the same tag set from the
@@ -59,17 +59,18 @@ export function digest(body) {
   const reads = extractReads(body);
   const epcs = [];
   const seen = new Set();
-  let lat = null, lng = null, inventory = "", place = "";
+  let lat = null, lng = null, inventory = "", place = "", device = "";
   for (const r of reads) {
     const raw = r?.EPC ?? r?.epc ?? r?.Epc ?? r?.TagID ?? r?.tagId ?? r?.tag ?? "";
     for (const e of parseTagList(String(raw))) if (!seen.has(e)) { seen.add(e); epcs.push(e); }
     if (lat == null) { const la = num(r?.Latitude ?? r?.latitude), lo = num(r?.Longitude ?? r?.longitude); if (la != null && lo != null && (la !== 0 || lo !== 0)) { lat = la; lng = lo; } }
     if (!inventory) inventory = String(r?.InventoryName ?? r?.inventoryName ?? r?.Inventory ?? r?.inventory ?? "").trim();
     if (!place) place = String(r?.LocationDetail ?? r?.locationDetail ?? r?.Location ?? "").replace(/\s*,\s*/g, ", ").trim();
+    if (!device) device = String(r?.DeviceSerialNumber ?? r?.deviceSerialNumber ?? "").trim().slice(0, 40);
   }
   if (!inventory && body && typeof body === "object" && !Array.isArray(body)) inventory = String(body.InventoryName ?? body.inventoryName ?? body.name ?? "").trim();
   if (!epcs.length && typeof body === "string") for (const e of parseTagList(body)) if (!seen.has(e)) { seen.add(e); epcs.push(e); }
-  return { epcs, lat, lng, inventory, place, reads: reads.length };
+  return { epcs, lat, lng, inventory, place, device, reads: reads.length };
 }
 
 let peopleCache = { at: 0, list: [] };
@@ -129,61 +130,23 @@ export default async function handler(req, res) {
     if (dup) { console.log("[tagmatiks] duplicate upload ignored", { key, sessionId: dup }); res.status(200).json({ ok: true, duplicate: true, sessionId: dup, tags: d.epcs.length }); return; }
     recent.set(key, { at: Date.now(), sessionId: "pending" });
 
+    // Every piece of a scan joins the open "Collecting" session for this sled + person; the box vote runs once,
+    // ~25 s after the last piece (lib/collect.js). Answer at once — a slow answer makes TagMatiks re-send.
     const isSweep = urlType === "Sweep" || /\bsweep\b/i.test(d.inventory);
-    const type = isSweep ? "Sweep" : (urlType || "Full Hub Audit");
-    const assigned = isSweep ? null : await assignHub({ urlHub: q.get("hub"), inventoryName: d.inventory, epcs: d.epcs });
-    // Tags didn't settle the box (tie, no majority, too few known tools): never wait on a person — file it as an
-    // UNCONFIRMED scan, processed like a Sweep (Scan Log + every tool's Last Scanned / Last Seen), judging nothing.
-    const unconfirmed = !isSweep && !assigned;
-    const leader = unconfirmed ? await describeLeader(d.epcs).catch(() => "") : "";
     const person = await findPerson(q.get("by"));
-    let snapped = { site: d.place, how: "gun's reported place" };
-    try { snapped = await snapSite({ lat: d.lat, lng: d.lng, hubId: assigned?.hub.id || null, gunPlace: d.place }); }
-    catch (e) { console.warn("[tagmatiks] site snap failed", e.message); }
-    const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", `upload ${key}`, d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
-      isSweep ? "sweep — no hub" : assigned ? `hub auto: ${assigned.how}` : `UNCONFIRMED box — tags didn't agree${leader ? `; ${leader}` : ""} · processed as a sweep (no missing / wrong-box)`, assigned?.warning ? `⚠️ ${assigned.warning}` : "",
-      snapped.site ? `site: ${snapped.how}` : ""].filter(Boolean).join(" · ");
-
-    const fields = {
-      [F.sessions.rawPayload]: d.epcs.join("\n"),
-      [F.sessions.started]: new Date().toISOString(),
-      [F.sessions.notes]: notes,
-    };
-    if (d.lat != null && d.lng != null) { fields[F.sessions.lat] = d.lat; fields[F.sessions.lng] = d.lng; }
-    if (snapped.site) fields[F.sessions.site] = snapped.site.slice(0, 200);
-    if (isSweep) {
-      fields[F.sessions.type] = "Sweep";
-      if (person) fields[F.sessions.by] = [person.id];
-      // no hub, Ingest Status blank → the automation runs it as a sweep
-    } else if (assigned) {
-      fields[F.sessions.hub] = [assigned.hub.id];
-      fields[F.sessions.type] = type;
-      if (person) fields[F.sessions.by] = [person.id];
-      // Ingest Status left blank → the Scan Ingest automation fires
-    } else {
-      // unconfirmed → runs as a Sweep (Ingest Status blank, no hub)
-      fields[F.sessions.type] = "Sweep";
-      if (person) fields[F.sessions.by] = [person.id];
-    }
-
-    const rec = await createRecord(T.sessions, fields);
-    recent.set(key, { at: Date.now(), sessionId: rec.id });
-    recordUpload({ source: "TagMatiks", sled, uploadKey: key, sessionId: rec.id, hubId: assigned?.hub.id, hubName: assigned?.hub.name,
-      type: isSweep ? "Sweep" : assigned ? type : "Unconfirmed (as Sweep)", person: person?.name, lat: d.lat, lng: d.lng,
-      site: snapped.site, place: d.place, epcs: d.epcs, raw: body });
-    if (isSweep) {
-      console.log("[tagmatiks] sweep", { sessionId: rec.id, tags: d.epcs.length, site: snapped.site, sled });
-      res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, type: "Sweep", site: snapped.site || null, status: "Processing" });
-      return;
-    }
-    if (unconfirmed) {
-      console.log("[tagmatiks] unconfirmed", { sessionId: rec.id, tags: d.epcs.length, leader, by: person?.name });
-      res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, type: "Sweep", unconfirmed: true, leader, status: "Processing" });
-      return;
-    }
-    // answer right away — the Scan Ingest automation runs on its own; a slow answer makes TagMatiks re-send
-    console.log("[tagmatiks] assigned", { sessionId: rec.id, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name, tags: d.epcs.length });
-    res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, hub: assigned.hub.name, how: assigned.how, warning: assigned.warning, by: person?.name || null, site: snapped.site || null, status: "Processing" });
+    const sledId = sled || d.device;
+    const got = await receiveChunk({ sled: sledId, device: d.device, by: q.get("by") || "", person, epcs: d.epcs, lat: d.lat, lng: d.lng,
+      place: d.place, uploadKey: key, urlType: isSweep ? "Sweep" : urlType, urlHub: q.get("hub") || "" });
+    recent.set(key, { at: Date.now(), sessionId: got.sessionId });
+    const later = Promise.all([
+      finalizeAfterQuiet(got.sessionId, got.chunk).catch((e) => console.error("[tagmatiks] finalise failed", got.sessionId, e.message)),
+      finalizeStale().catch((e) => console.warn("[tagmatiks] stale sweep failed", e.message)),
+    ]);
+    try { waitUntil(later); } catch { /* local dev: the promise still runs */ }
+    recordUpload({ source: "TagMatiks", sled: sledId, uploadKey: key, sessionId: got.sessionId, type: isSweep ? "Sweep" : urlType || null,
+      person: person?.name, lat: d.lat, lng: d.lng, place: d.place, epcs: d.epcs, raw: body });
+    console.log("[tagmatiks] collected", { sessionId: got.sessionId, piece: got.chunk, newScan: got.created, tags: d.epcs.length, by: person?.name, sled: sledId });
+    res.status(200).json({ ok: true, sessionId: got.sessionId, tags: d.epcs.length, piece: got.chunk, by: person?.name || null, status: "Collecting — files ~25 s after the last piece" });
   } catch (e) {
     console.error("[tagmatiks] error", e.message);
     res.status(502).json({ error: e.message || String(e) });

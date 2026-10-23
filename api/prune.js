@@ -7,6 +7,7 @@
 import { listAll, deleteRecords } from "../lib/airtable.js";
 import { hasDb, pgStore } from "../lib/db.js";
 import { config, runPrune } from "../lib/prune.js";
+import { finalizeStale } from "../lib/collect.js";
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
@@ -31,6 +32,7 @@ export default async function handler(req, res) {
     }
     if (secret && !authed) { res.status(401).json({ error: "cron only" }); return; }
 
+    try { await finalizeStale(); } catch (e) { console.warn("[prune] stale collecting sweep failed", e.message); }
     const report = await runPrune({ store: pgStore, airtable: { listAll, deleteRecords } }, cfg, { allowDelete: cfg.deleteEnabled && authed });
     console.log("[prune]", report);
     res.status(200).json(report);
