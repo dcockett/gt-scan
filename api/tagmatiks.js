@@ -17,7 +17,7 @@
 import { createHash } from "node:crypto";
 import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, listAll } from "../lib/airtable.js";
 import { parseTagList } from "../lib/epc.js";
-import { assignHub } from "../lib/assign.js";
+import { assignHub, describeLeader } from "../lib/assign.js";
 import { snapSite } from "../lib/site.js";
 import { recordUpload } from "../lib/history.js";
 
@@ -123,12 +123,16 @@ export default async function handler(req, res) {
     const isSweep = urlType === "Sweep" || /\bsweep\b/i.test(d.inventory);
     const type = isSweep ? "Sweep" : (urlType || "Full Hub Audit");
     const assigned = isSweep ? null : await assignHub({ urlHub: q.get("hub"), inventoryName: d.inventory, epcs: d.epcs });
+    // Tags didn't settle the box (tie, no majority, too few known tools): never wait on a person — file it as an
+    // UNCONFIRMED scan, processed like a Sweep (Scan Log + every tool's Last Scanned / Last Seen), judging nothing.
+    const unconfirmed = !isSweep && !assigned;
+    const leader = unconfirmed ? await describeLeader(d.epcs).catch(() => "") : "";
     const person = await findPerson(q.get("by"));
     let snapped = { site: d.place, how: "gun's reported place" };
     try { snapped = await snapSite({ lat: d.lat, lng: d.lng, hubId: assigned?.hub.id || null, gunPlace: d.place }); }
     catch (e) { console.warn("[tagmatiks] site snap failed", e.message); }
     const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", `upload ${key}`, d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
-      isSweep ? "sweep — no hub" : assigned ? `hub auto: ${assigned.how}` : "hub unknown — waiting for the page", assigned?.warning ? `⚠️ ${assigned.warning}` : "",
+      isSweep ? "sweep — no hub" : assigned ? `hub auto: ${assigned.how}` : `UNCONFIRMED box — tags didn't agree${leader ? `; ${leader}` : ""} · processed as a sweep (no missing / wrong-box)`, assigned?.warning ? `⚠️ ${assigned.warning}` : "",
       snapped.site ? `site: ${snapped.how}` : "", isSample ? "TagMatiks test sample (GPS ignored)" : ""].filter(Boolean).join(" · ");
 
     const fields = {
@@ -148,23 +152,24 @@ export default async function handler(req, res) {
       if (person) fields[F.sessions.by] = [person.id];
       // Ingest Status left blank → the Scan Ingest automation fires
     } else {
-      fields[F.sessions.ingestStatus] = AWAITING_HUB;
+      // unconfirmed → runs as a Sweep (Ingest Status blank, no hub)
+      fields[F.sessions.type] = "Sweep";
       if (person) fields[F.sessions.by] = [person.id];
     }
 
     const rec = await createRecord(T.sessions, fields);
     recent.set(key, { at: Date.now(), sessionId: rec.id });
     recordUpload({ source: "TagMatiks", sled, uploadKey: key, sessionId: rec.id, hubId: assigned?.hub.id, hubName: assigned?.hub.name,
-      type: isSweep ? "Sweep" : assigned ? type : "Awaiting hub", person: person?.name, lat: d.lat, lng: d.lng,
+      type: isSweep ? "Sweep" : assigned ? type : "Unconfirmed (as Sweep)", person: person?.name, lat: d.lat, lng: d.lng,
       site: snapped.site, place: d.place, epcs: d.epcs, raw: body });
     if (isSweep) {
       console.log("[tagmatiks] sweep", { sessionId: rec.id, tags: d.epcs.length, site: snapped.site, sled });
       res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, type: "Sweep", site: snapped.site || null, status: "Processing" });
       return;
     }
-    if (!assigned) {
-      console.log("[tagmatiks] parked", { sessionId: rec.id, tags: d.epcs.length, sled });
-      res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, status: AWAITING_HUB, next: "Open the scan page, tap the waiting scan, pick the hub, Complete." });
+    if (unconfirmed) {
+      console.log("[tagmatiks] unconfirmed", { sessionId: rec.id, tags: d.epcs.length, leader, by: person?.name });
+      res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, type: "Sweep", unconfirmed: true, leader, status: "Processing" });
       return;
     }
     // answer right away — the Scan Ingest automation runs on its own; a slow answer makes TagMatiks re-send
