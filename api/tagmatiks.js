@@ -108,6 +108,10 @@ export default async function handler(req, res) {
   console.log("[tagmatiks] POST", { ct, type: Array.isArray(body) ? "array" : typeof body, keys: body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body).slice(0, 10) : undefined, sample: JSON.stringify(body).slice(0, 300) });
 
   const d = digest(body);
+  // TagMatiks "Test Sample Data" sends made-up tags (ASCII "Monitor", "CPU"…) with made-up GPS in India.
+  // Keep it as a test upload, but never let its GPS move a hub, label a site, or stamp a tool's last-seen.
+  const isSample = d.epcs.length > 0 && d.epcs.every((e) => /4D6F6E69746F72|4350550A/i.test(e) || /^0*(4D6F6E69746F72|4350550A)$/i.test(e)) || (d.lat != null && Math.abs(d.lat - 11.102256) < 1e-4 && Math.abs(d.lng - 76.987613) < 1e-4);
+  if (isSample) { d.lat = null; d.lng = null; d.place = ""; }
   if (!d.epcs.length) { res.status(400).json({ error: "No tags found in the upload", reads: d.reads }); return; }
 
   try {
@@ -125,7 +129,7 @@ export default async function handler(req, res) {
     catch (e) { console.warn("[tagmatiks] site snap failed", e.message); }
     const notes = ["via TagMatiks", sled ? `sled ${sled}` : "", `upload ${key}`, d.inventory ? `inventory "${d.inventory}"` : "", `${d.epcs.length} tags`,
       isSweep ? "sweep — no hub" : assigned ? `hub auto: ${assigned.how}` : "hub unknown — waiting for the page", assigned?.warning ? `⚠️ ${assigned.warning}` : "",
-      snapped.site ? `site: ${snapped.how}` : ""].filter(Boolean).join(" · ");
+      snapped.site ? `site: ${snapped.how}` : "", isSample ? "TagMatiks test sample (GPS ignored)" : ""].filter(Boolean).join(" · ");
 
     const fields = {
       [F.sessions.rawPayload]: d.epcs.join("\n"),
@@ -145,6 +149,7 @@ export default async function handler(req, res) {
       // Ingest Status left blank → the Scan Ingest automation fires
     } else {
       fields[F.sessions.ingestStatus] = AWAITING_HUB;
+      if (person) fields[F.sessions.by] = [person.id];
     }
 
     const rec = await createRecord(T.sessions, fields);
