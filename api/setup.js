@@ -63,7 +63,7 @@ ${problems.map((p) => `<div class="card warn">⚠️ ${esc(p)}</div>`).join("")}
 <ul><li>Save it to <b>Files</b> when Safari asks.</li>
 <li>In TagMatiks: <b>Application Configuration → Reference File</b> → browse → pick <b>grey-trunk-reference.csv</b>.</li>
 <li><b>Header Mapping:</b> set <b>EPC (hex)</b> → <b>EPC</b>. Leave the rest.</li>
-<li>Inventory View fields: <b>Name, Tag ID, Home Hub, Category</b>.</li></ul></div>
+<li>Inventory View fields, in order: <b>Name, Tag ID, Home Hub, Category, EPC (hex)</b>. Keep EPC (hex) last so two identical tools never get lumped together as Qty 2.</li></ul></div>
 <div class="card"><h2><span class="n">2</span>Your upload address</h2>
 <div class="addr" id="addr">${esc(upload)}</div>
 <button id="copy">Copy address</button>
