@@ -8,6 +8,7 @@
 import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, getRecord, updateRecord, selectName } from "../lib/airtable.js";
 import { extractEpcs } from "../lib/epc.js";
 import { snapSite } from "../lib/site.js";
+import { recordUpload } from "../lib/history.js";
 
 const POLL_MS = 1000;
 const POLL_MAX_MS = 25 * 1000; // Vercel hobby functions get 10s by default; vercel.json raises it
@@ -96,6 +97,10 @@ export async function submitScan(body) {
     created = await createRecord(T.sessions, fields);
     sessionId = created.id;
   }
+
+  recordUpload({ source: claimId ? "Scan page (claimed gun upload)" : "Scan page", sessionId, hubId: fields[F.sessions.hub]?.[0] || null,
+    type, person: personId, lat: Number.isFinite(gpsLat) ? gpsLat : null, lng: Number.isFinite(gpsLng) ? gpsLng : null,
+    site: fields[F.sessions.site] || null, epcs: tags, raw: { notes: body.notes || null, accuracy: body.accuracy ?? null } });
 
   // Wait for Scan Ingest to stamp Done / Error.
   const deadline = Date.now() + POLL_MAX_MS;

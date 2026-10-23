@@ -19,6 +19,7 @@ import { T, F, SESSION_TYPES, AWAITING_HUB, createRecord, listAll } from "../lib
 import { parseTagList } from "../lib/epc.js";
 import { assignHub } from "../lib/assign.js";
 import { snapSite } from "../lib/site.js";
+import { recordUpload } from "../lib/history.js";
 
 // TagMatiks re-sends an upload if the response is slow, so: answer at once, and treat the same tag set from the
 // same sled inside this window as one upload. Checked in memory (warm instance) and in Airtable (cold start).
@@ -148,6 +149,9 @@ export default async function handler(req, res) {
 
     const rec = await createRecord(T.sessions, fields);
     recent.set(key, { at: Date.now(), sessionId: rec.id });
+    recordUpload({ source: "TagMatiks", sled, uploadKey: key, sessionId: rec.id, hubId: assigned?.hub.id, hubName: assigned?.hub.name,
+      type: isSweep ? "Sweep" : assigned ? type : "Awaiting hub", person: person?.name, lat: d.lat, lng: d.lng,
+      site: snapped.site, place: d.place, epcs: d.epcs, raw: body });
     if (isSweep) {
       console.log("[tagmatiks] sweep", { sessionId: rec.id, tags: d.epcs.length, site: snapped.site, sled });
       res.status(200).json({ ok: true, sessionId: rec.id, tags: d.epcs.length, type: "Sweep", site: snapped.site || null, status: "Processing" });

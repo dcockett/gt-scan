@@ -11,6 +11,9 @@
     },
     "api/reference.js": {
       "maxDuration": 30
+    },
+    "api/prune.js": {
+      "maxDuration": 60
     }
   },
   "headers": [
@@ -28,6 +31,12 @@
     {
       "source": "/api/reference.csv",
       "destination": "/api/reference"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/prune",
+      "schedule": "0 10 * * *"
     }
   ]
 }
