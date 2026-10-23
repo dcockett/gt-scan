@@ -31,6 +31,10 @@
     {
       "source": "/api/reference.csv",
       "destination": "/api/reference"
+    },
+    {
+      "source": "/setup",
+      "destination": "/api/setup"
     }
   ],
   "crons": [

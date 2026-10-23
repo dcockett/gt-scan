@@ -111,7 +111,7 @@ export default async function handler(req, res) {
   if (!d.epcs.length) { res.status(400).json({ error: "No tags found in the upload", reads: d.reads }); return; }
 
   try {
-    const key = uploadKey(sled, d.epcs);
+    const key = uploadKey(`${sled}|${String(q.get("by") || "").toLowerCase()}`, d.epcs); // per sled + person
     const dup = await alreadyLanded(key);
     if (dup) { console.log("[tagmatiks] duplicate upload ignored", { key, sessionId: dup }); res.status(200).json({ ok: true, duplicate: true, sessionId: dup, tags: d.epcs.length }); return; }
     recent.set(key, { at: Date.now(), sessionId: "pending" });

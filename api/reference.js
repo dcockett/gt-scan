@@ -18,6 +18,8 @@ export default async function handler(req, res) {
   if (req.method !== "GET") { res.status(405).json({ error: "GET only" }); return; }
   try {
     const url = new URL(req.url || "/", "http://x");
+    // once uploads need a key, so does the tool list (the setup page's Download button carries it)
+    if (process.env.TAGMATIKS_KEY && url.searchParams.get("k") !== process.env.TAGMATIKS_KEY) { res.status(401).json({ error: "bad key — use the Download button on your setup link" }); return; }
     const hubs = await loadHubs();
     const hubName = new Map(hubs.map((h) => [h.id, h.name]));
     const only = matchHub(url.searchParams.get("hub"), hubs);
