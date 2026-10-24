@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
-const SCRIPT = readFileSync(new URL("../airtable/scan_ingest_v1_6.js", import.meta.url), "utf8");
+const SCRIPT = readFileSync(new URL("../airtable/scan_ingest_v1_7.js", import.meta.url), "utf8");
 
 function makeTable(name, rows) {
   const recs = rows.map((r) => ({ id: r.id, f: { ...r.fields } }));
@@ -124,7 +124,8 @@ const PKG = "30283312D82900D61E7101F7";
   assert.equal(t.Tools.get("recT1")["Daily Status"].name, "Confirmed (RFID)"); assert.equal(t.Tools.get("recT1")["Visual Confirms in a Row"], 0);
   assert.equal(t.Tools.get("recT2")["Daily Status"].name, "Damaged", "a scan never clears Damaged");
   assert.equal(t.Tools.get("recT3")["Daily Status"].name, "Confirmed (RFID)"); assert.equal(t.Tools.get("recT3")["Visual Confirms in a Row"], 0);
-  console.log("PASS v1.6 hub last scan + tag health:", h["Last Scan Summary"]);
+  assert.equal(t.Tools.get("recT1")["Last Scanned By"], "Dylan Cockett");
+  console.log("PASS v1.6/1.7 hub last scan + tag health + last scanned by:", h["Last Scan Summary"]);
 }
 
 // 2. No GPS, no site → Last Seen Site falls back to the hub's Site / Location; Lat/Long untouched
