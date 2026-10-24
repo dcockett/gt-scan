@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Cockett Tools Scan — TagMatiks / scan-page relay into the Cockett Tools & Hubs Airtable base, with full scan history in Postgres (Neon) and the size-capped Scan Log cleanup.",
   "scripts": {
-    "test": "node --test test/*.test.mjs && node test/ingest-harness.mjs",
+    "test": "node --test test/*.test.mjs && node test/ingest-harness.mjs && node test/crew-check-harness.mjs",
     "dev": "node dev.mjs"
   },
   "engines": {

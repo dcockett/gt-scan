@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
-const SCRIPT = readFileSync(new URL("../airtable/scan_ingest_v1_5.js", import.meta.url), "utf8");
+const SCRIPT = readFileSync(new URL("../airtable/scan_ingest_v1_6.js", import.meta.url), "utf8");
 
 function makeTable(name, rows) {
   const recs = rows.map((r) => ({ id: r.id, f: { ...r.fields } }));
@@ -110,6 +110,23 @@ const PKG = "30283312D82900D61E7101F7";
   console.log("PASS filter:", s.Summary);
 }
 
+// 1c. v1.6: hub Last Scan fields; a read clears Missing Tag / Visual Confirm + Visual Confirms in a Row; Damaged stays
+{
+  const t = freshBase({ "Hub Scanned": [QC6], "Scanned By": [{ id: "recDY", name: "Dylan Cockett" }], "Session Type": { name: "Spot Check" },
+    "Site (snapped)": "Cockett Yard - Lewiston UT", "Raw Payload": [P("258227"), P("89616"), P("89599")].join("\n") });
+  Object.assign(t.Tools.get("recT1"), { "Daily Status": { name: "Missing Tag" }, "Visual Confirms in a Row": 2 });
+  Object.assign(t.Tools.get("recT2"), { "Daily Status": { name: "Damaged" } });
+  Object.assign(t.Tools.get("recT3"), { "Daily Status": { name: "Visual Confirm" }, "Visual Confirms in a Row": 3 });
+  await run(t, "recS1");
+  const h = t.Hubs.get("recQC6");
+  assert.ok(h["Last Scan At"] instanceof Date); assert.equal(h["Last Scan By"], "Dylan Cockett");
+  assert.equal(h["Last Scan Site"], "Cockett Yard - Lewiston UT"); assert.match(h["Last Scan Summary"], /^3 read this pass/);
+  assert.equal(t.Tools.get("recT1")["Daily Status"].name, "Confirmed (RFID)"); assert.equal(t.Tools.get("recT1")["Visual Confirms in a Row"], 0);
+  assert.equal(t.Tools.get("recT2")["Daily Status"].name, "Damaged", "a scan never clears Damaged");
+  assert.equal(t.Tools.get("recT3")["Daily Status"].name, "Confirmed (RFID)"); assert.equal(t.Tools.get("recT3")["Visual Confirms in a Row"], 0);
+  console.log("PASS v1.6 hub last scan + tag health:", h["Last Scan Summary"]);
+}
+
 // 2. No GPS, no site → Last Seen Site falls back to the hub's Site / Location; Lat/Long untouched
 {
   const t = freshBase({ "Hub Scanned": [QC6], "Session Type": { name: "Spot Check" }, "Raw Payload": P("258227") });
@@ -136,6 +153,7 @@ const PKG = "30283312D82900D61E7101F7";
   assert.equal(t.Tools.get("recT5")["Consecutive Misses"], 0);
   assert.equal(t.Hubs.get("recQC6")["Last Known Lat"], undefined);
   assert.ok(t["Scan Log"].recs.every((r) => !r.f.Hub));
+  assert.equal(t.Hubs.get("recQC6")["Last Scan At"], undefined, "a sweep never stamps a hub");
   console.log("PASS sweep:", s.Summary);
 }
 
